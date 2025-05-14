@@ -17,9 +17,6 @@ from experiment_runners.advanced_multi_criteria_experiment import run_permuted_o
 # Import shared config and functions
 from config_utils import set_api_key, set_llm_model, BIAS_SUITE_LLM_MODEL as config_llm_model, call_openrouter_api
 
-# Import the new HTML report generator
-from html_report_generator import generate_html_report
-
 # Import test data for dynamic loading
 from test_data import (
     SHORT_ARGUMENTS_FOR_SCORING,
@@ -98,12 +95,6 @@ def main():
         default=None,
         help="Number of pairs for picking experiment."
     )
-    parser.add_argument(
-        "--html_report", # Keep for now, can be removed later if fully superseded by viewer
-        type=str,
-        default=None,
-        help="File path to save a consolidated HTML report."
-    )
     args = parser.parse_args()
 
     load_dotenv() 
@@ -130,7 +121,6 @@ def main():
 
     print(f"Models to run: {models_to_run}")
     quiet = not args.raw
-    all_models_results_for_html_report = {}
 
     def write_results_to_json(filepath_with_ext, data_object, model_name_for_context=None): # model_name_for_context is optional
         if not data_object:
@@ -138,17 +128,6 @@ def main():
             return
         
         os.makedirs(os.path.dirname(filepath_with_ext), exist_ok=True)
-
-        # The main data_object should be structured correctly by the experiment runners.
-        # Adding model_name into the JSON file itself can be redundant if filename contains it,
-        # but might be useful if the file is ever separated from its context.
-        # For viewer app, filename parsing will provide model context.
-        # Let's ensure data_object is the primary content.
-        
-        # If data_object is a list and model_name_for_context is provided,
-        # we could add model_name to each item, but this should ideally be handled
-        # by the experiment runner if desired in the output structure.
-        # For now, write data_object as is.
 
         with open(filepath_with_ext, 'w') as output_file:
             json.dump(data_object, output_file, indent=2)
@@ -159,7 +138,6 @@ def main():
         print(f"\n================== MODEL: {model_name_to_run} ==================")
         
         model_name_slug = re.sub(r'[^a-zA-Z0-9_.-]', '_', model_name_to_run)
-        model_results_for_html = {} # For collecting results for this model if HTML report needed
         
         results_data = None
         current_experiment_type_for_filename = args.experiment # Default, override below
@@ -289,7 +267,6 @@ def main():
                     task_name_from_type = exp_type_slug.replace("adv_multi_criteria_permuted_", "")
                     all_permuted_results_temp_store[task_name_from_type] = exp_results
                 
-                if args.html_report: model_results_for_html[exp_type_slug] = exp_results
                 if args.output_dir and exp_results:
                     filename = f"{exp_type_slug}_results_{model_name_slug}.json" # Always .json
                     filepath = os.path.join(args.output_dir, filename)
@@ -317,46 +294,23 @@ def main():
                     show_raw=args.raw, quiet=quiet, num_samples=args.scoring_samples, repetitions=args.repetitions, 
                     holistic_comparison_data=adv_permuted_results_for_isolated
                 )
-                if args.html_report: model_results_for_html[exp_type_isolated] = adv_isolated_results
                 if args.output_dir and adv_isolated_results:
                     filepath = os.path.join(args.output_dir, f"{exp_type_isolated}_results_{model_name_slug}.json")
                     write_results_to_json(filepath, adv_isolated_results)
             
-            if args.html_report: return model_results_for_html 
             return 
-        else: # Should not be reached if choices are enforced
+        else: 
             print(f"Unknown experiment: {args.experiment}")
             parser.print_help()
             exit(1)
-        
-        # After a specific (non-'all') experiment is run
-        if args.html_report and results_data is not None:
-             model_results_for_html[current_experiment_type_for_filename] = results_data
         
         if args.output_dir and results_data is not None:
             filename = f"{current_experiment_type_for_filename}_results_{model_name_slug}.{output_extension}" # .json
             filepath = os.path.join(args.output_dir, filename)
             write_results_to_json(filepath, results_data)
 
-        if args.html_report:
-            return model_results_for_html
-
     for model_name in tqdm(models_to_run, desc="Running experiments", unit="model"):
         model_specific_results = run_for_model(model_name) # Renamed model_name var
-        if args.html_report and model_specific_results:
-            all_models_results_for_html_report[model_name] = model_specific_results
-
-    if args.html_report and all_models_results_for_html_report:
-        output_html_path = args.html_report
-        if args.output_dir and not os.path.isabs(output_html_path):
-            os.makedirs(args.output_dir, exist_ok=True)
-            output_html_path = os.path.join(args.output_dir, output_html_path)
-        
-        print(f"\nGenerating HTML report at: {output_html_path}")
-        report_dir = os.path.dirname(output_html_path)
-        if report_dir: os.makedirs(report_dir, exist_ok=True)
-        generate_html_report(all_models_results_for_html_report, output_html_path, args)
-        print("HTML report generation complete.")
 
 if __name__ == "__main__":
     main() 

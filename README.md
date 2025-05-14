@@ -28,7 +28,6 @@ Understanding these interaction-driven factors is crucial for anyone relying on 
 *   **`test_data.py`**: Stores all test datasets (poems, story openings, consultation drafts, texts for sentiment/criterion analysis, etc.) in structured Python formats. Includes human baseline scores and rubrics where applicable.
 *   **`config_utils.py`**: Manages LLM API interactions (currently configured for OpenRouter), model selection, and API key handling.
 *   **`.env` (template)**: For storing API keys (e.g., `OPENROUTER_API_KEY`) and the default model (e.g., `BIAS_SUITE_LLM_MODEL`).
-*   **`html_report_generator.py`**: Generates a consolidated HTML report from the JSON outputs of various experiments and models.
 
 ## Key Experiments & Behaviors Investigated
 
