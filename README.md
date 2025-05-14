@@ -1,12 +1,12 @@
 # LLM Judge Bias Research Suite
 
-This is a research project where we're attempting to understand how small nuances and different approaches in how we pose evaluation tasks to LLM 'judges' can lead to different outcomes.
+This is a research project where we're attempting to understand how small nuances and different approaches in how we pose evaluation tasks to LLM 'judges' can lead to vastly different outcomes.
 
 **Investigating the Nuances of LLM Behavior in Evaluative Tasks**
 
 ## Overview
 
-Large Language Models (LLMs) are increasingly used for tasks requiring evaluation, ranking, scoring, and classification. However, the reliability and consistency of their outputs can be significantly affected by subtle aspects of how questions are posed, how criteria are defined, and how scoring systems are presented. This small project provides a some python scripts to systematically probe, compare, and understand these interaction-driven biases and behavioral patterns in LLMs. The suite is designed to illuminate how LLMs interpret and respond to evaluative instructions, revealing potential inconsistencies or "biases" in their application of:
+Large Language Models (LLMs) are increasingly used for tasks requiring evaluation, ranking, scoring, and classification. However, the reliability and consistency of their outputs can be significantly affected by subtle aspects of how questions are posed, how criteria are defined, and how scoring systems are presented. This small project provides a some python scripts to systematically probe, compare, and understand these interaction-driven biases and behavioral patterns in LLMs, namely:
 
 *   **Positional Cues**: Does the order of options influence choice? How do different *labeling schemes* (e.g., "Response 1/Response 2", "(A)/(B)", "TEXT_A/TEXT_B", "Response A/Response B", or even randomly generated IDs like "ID_x7y2/ID_z3k9") affect this?
 *   **Scoring Scales**: Do LLMs correctly map concepts to numerical or categorical scales, especially when evaluating negative or undesirable traits (e.g., assigning a *high* score for *high presence* of a negative attribute)?
@@ -54,21 +54,19 @@ Understanding these interaction-driven factors is crucial for anyone relying on 
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repo-url>
-    cd <your-repo-name> 
+    git clone https://github.com/collect-intel/llm-judge-bias-suite
+    cd llm-judge-bias-suite
     ```
-    (Replace `<your-repo-url>` and `<your-repo-name>` with your actual repository URL and local directory name)
 
 2.  **Set up a virtual environment (recommended):**
     ```bash
     python3 -m venv venv
-    source venv/bin/activate  # On Windows use `venv\\Scripts\\activate`
+    source venv/bin/activate
     ```
 3.  **Install dependencies:**
     ```bash
     pip install -r requirements.txt
     ```
-    *(This file needs to be created if it doesn\'t exist. It should list packages like `requests`, `python-dotenv`, `numpy`, `tqdm`.)*
 
 4.  **Configure API Key & Default Model:**
     *   Create a file named `.env` in the project root.
