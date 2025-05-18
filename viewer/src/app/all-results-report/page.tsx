@@ -5,7 +5,7 @@ import { useEffect, useState, useCallback } from 'react';
 // Import Actual Types from @/types - these should be properly exported from their definition files
 import { ScoringExperimentData } from '@/types/scoringExperiment'; // Assuming ScoringVariantResult, ScoringItemResult are used internally or not needed at top level here
 import { PermutedOrderExperimentData, IsolatedHolisticExperimentData } from '@/types/advancedMultiCriteriaExperiment';
-import { PairwiseEloExperimentDataWrapper } from '@/types/pairwiseEloExperiment';
+import { PairwiseEloExperimentDataWrapper, EloItemVariantSummary } from '@/types/pairwiseEloExperiment';
 import { AggregatedPickingSummary } from '@/types/aggregatedPicking';
 import { AggregatedScoringOverallSummary } from '@/types/aggregatedScoring';
 import { AggregatedEloOverallSummary } from '@/types/aggregatedPairwiseElo';
@@ -13,7 +13,7 @@ import { AggregatedAdvancedPermutedOverallSummary } from '@/types/aggregatedAdva
 import { AggregatedAdvancedIsolatedOverallSummary } from '@/types/aggregatedAdvancedIsolated';
 
 // Import Components
-import PickingExperimentCharts from '@/components/PickingExperimentCharts';
+import PickingExperimentCharts, { ProcessedPickingData as PickingChartsProcessedData } from '@/components/PickingExperimentCharts';
 import ScoringExperimentViewer from '@/components/ScoringExperimentViewer';
 import AdvancedPermutedOrderViewer from '@/components/AdvancedPermutedOrderViewer';
 import AdvancedIsolatedHolisticViewer from '@/components/AdvancedIsolatedHolisticViewer';
@@ -94,46 +94,124 @@ interface PickingExperimentSchemeResult { // Matches Python output structure for
 
 type PickingExperimentApiResponse = PickingExperimentSchemeResult[];
 
-interface ProcessedPickingData { // For PickingExperimentCharts component
-    variantName: string;
-    labelingSchemeName: string; 
-    schemeDescription: string; 
-    schemeDisplayLabel1: string; 
-    schemeDisplayLabel2: string; 
-    biasRate: number; 
-    consistencyRate: number; 
-    totalValidPairsForBias: number;
-    totalValidPairsForConsistency: number;
-    favoredLabel1Count: number; 
-    favoredLabel2Count: number; 
-    favoredPositionInconclusiveCount: number; 
+// This local type should align with what PickingExperimentCharts expects.
+// Using the imported type directly or ensuring this one matches.
+interface ProcessedPickingDataReportPage extends PickingChartsProcessedData {}
+// If PickingChartsProcessedData is exactly what's needed, this can be just an alias or removed if not strictly necessary.
+// The transform function will now output ProcessedPickingDataReportPage, which must be compatible.
+
+const transformPickingJsonToChartData = (apiResponse: PickingExperimentApiResponse): ProcessedPickingDataReportPage[] => {
+    if (!apiResponse || !Array.isArray(apiResponse)) return [];
+    return apiResponse.map(schemeResult => {
+        // Calculate avgFirstSlotPreferenceForScheme from raw pair data
+        let totalFirstSlotPicksAcrossPairs = 0;
+        let totalDecisionsAcrossPairs = 0;
+
+        schemeResult.pairs_summary_for_scheme.forEach(pair => {
+            const picksForContentInSlot1Run1 = pair.run1_pick_distribution["text_A"] || 0;
+            const totalPicksRun1 = Object.values(pair.run1_pick_distribution).reduce((s, c) => s + c, 0);
+            
+            const picksForContentInSlot1Run2 = pair.run2_pick_distribution["text_B"] || 0;
+            const totalPicksRun2 = Object.values(pair.run2_pick_distribution).reduce((s, c) => s + c, 0);
+
+            if (totalPicksRun1 > 0 || totalPicksRun2 > 0) { 
+                totalFirstSlotPicksAcrossPairs += (picksForContentInSlot1Run1 + picksForContentInSlot1Run2);
+                totalDecisionsAcrossPairs += (totalPicksRun1 + totalPicksRun2);
+            }
+        });
+
+        const avgFirstSlotPreference = totalDecisionsAcrossPairs > 0 
+            ? (totalFirstSlotPicksAcrossPairs / totalDecisionsAcrossPairs) * 100 
+            : 0;
+
+        return {
+            variantName: schemeResult.variant_name,
+            labelingSchemeName: schemeResult.labeling_scheme_name,
+            schemeDescription: schemeResult.scheme_description,
+            schemeDisplayLabel1: schemeResult.scheme_display_label1,
+            schemeDisplayLabel2: schemeResult.scheme_display_label2,
+            avgFirstSlotPreferenceForScheme: avgFirstSlotPreference,
+            repetitionsPerOrderRun: schemeResult.repetitions_per_order_run,
+        };
+    });
+};
+
+// --- START: Add local Python ELO output types and transformation ---
+interface PythonEloFinalRankingItem {
+  id: string;
+  text_snippet: string;
+  elo: number;
+  W: number;
+  L: number;
+  T: number;
 }
 
-const transformPickingJsonToChartData = (apiResponse: PickingExperimentApiResponse): ProcessedPickingData[] => {
-    if (!apiResponse || !Array.isArray(apiResponse)) return [];
-    return apiResponse.map(schemeResult => ({
-        variantName: schemeResult.variant_name,
-        labelingSchemeName: schemeResult.labeling_scheme_name,
-        schemeDescription: schemeResult.scheme_description,
-        schemeDisplayLabel1: schemeResult.scheme_display_label1,
-        schemeDisplayLabel2: schemeResult.scheme_display_label2,
-        biasRate: schemeResult.positional_bias_rate_percentage,
-        consistencyRate: schemeResult.consistency_rate_percentage,
-        totalValidPairsForBias: schemeResult.valid_pairs_for_bias_calculation,
-        totalValidPairsForConsistency: schemeResult.valid_pairs_for_consistency_calculation,
-        favoredLabel1Count: schemeResult.favored_scheme_label1_count,
-        favoredLabel2Count: schemeResult.favored_scheme_label2_count,
-        favoredPositionInconclusiveCount: schemeResult.favored_position_inconclusive_count
-    }));
+interface PythonEloVariantSummary_Py { // Suffix to avoid naming conflicts if other types are imported
+  variant_name: string;
+  // Add other fields from Python output for this variant summary if needed by the transform, e.g.:
+  // system_prompt_used: string;
+  // user_prompt_template_used: string;
+  final_rankings: PythonEloFinalRankingItem[];
+}
+
+interface PythonEloRankingSetSummary_Py { // Suffix for clarity
+  ranking_set_id: string;
+  criterion: string;
+  item_count: number;
+  variants_summary: PythonEloVariantSummary_Py[];
+}
+
+// Type for the raw API response for an ELO experiment file (top-level is an array of these sets)
+// The actual type for rawData when actualExperimentTypeFromFile.startsWith('pairwise_elo')
+// will be PythonEloRankingSetSummary_Py[]
+type PairwiseEloApiResponse_Py = PythonEloRankingSetSummary_Py[];
+
+// This function transforms the Python output (array of sets) into the structure needed by the viewer
+// The output type PairwiseEloExperimentDataWrapper[] means each element is a set ready for PairwiseEloViewer
+const transformEloApiResponseToViewerData = (
+  apiResponse: PairwiseEloApiResponse_Py
+): PairwiseEloExperimentDataWrapper[] => {
+  if (!apiResponse || !Array.isArray(apiResponse)) {
+    return [];
+  }
+
+  return apiResponse.map(pyRankingSet => {
+    const flattenedItems: EloItemVariantSummary[] = [];
+    if (pyRankingSet.variants_summary && Array.isArray(pyRankingSet.variants_summary)) {
+      pyRankingSet.variants_summary.forEach(pyVariantSummary => {
+        if (pyVariantSummary.final_rankings && Array.isArray(pyVariantSummary.final_rankings)) {
+          pyVariantSummary.final_rankings.forEach((item, index) => {
+            flattenedItems.push({
+              variant_name: pyVariantSummary.variant_name,
+              rank: index + 1, // Rank is 1-based from order in array
+              item_id: item.id,
+              elo_rating: item.elo,
+              wins: item.W,
+              losses: item.L,
+              ties: item.T,
+              item_text_snippet: item.text_snippet,
+            });
+          });
+        }
+      });
+    }
+
+    return {
+      criterion: pyRankingSet.criterion,
+      ranking_set_id: pyRankingSet.ranking_set_id,
+      variants_summary: flattenedItems, // This is now EloItemVariantSummary[]
+    };
+  });
 };
+// --- END: Add local Python ELO output types and transformation ---
 
 interface ModelExperimentState { // Simplified from page.tsx, tailored for this report page
     data: any | null; // Raw JSON data from API
-    processedPickingData?: ProcessedPickingData[] | null;
+    processedPickingData?: ProcessedPickingDataReportPage[] | null;
     scoringExperimentData?: ScoringExperimentData | null;
     permutedOrderData?: PermutedOrderExperimentData | null;
     isolatedHolisticData?: IsolatedHolisticExperimentData | null;
-    pairwiseEloData?: PairwiseEloExperimentDataWrapper | null;
+    pairwiseEloData?: PairwiseEloExperimentDataWrapper[] | null;
     isLoading: boolean; // Should be false once processed for this page
     error: string | null;
     fileName: string | null;
@@ -250,11 +328,11 @@ export default function AllResultsReportPage() {
                 }
                 const rawData = await dataResponse.json();
 
-                let processedPickingDataForChart: ProcessedPickingData[] | undefined = undefined;
+                let processedPickingDataForChart: ProcessedPickingDataReportPage[] | undefined = undefined;
                 let processedScoringData: ScoringExperimentData | undefined = undefined;
                 let permutedOrderDataForViewer: PermutedOrderExperimentData | undefined = undefined;
                 let isolatedHolisticDataForViewer: IsolatedHolisticExperimentData | undefined = undefined;
-                let pairwiseEloDataForViewer: PairwiseEloExperimentDataWrapper | undefined = undefined;
+                let pairwiseEloDataForViewer: PairwiseEloExperimentDataWrapper[] | undefined = undefined;
 
                 const actualExperimentTypeFromFile = fileToFetch.experimentType;
 
@@ -267,7 +345,8 @@ export default function AllResultsReportPage() {
                 } else if (actualExperimentTypeFromFile.startsWith('adv_multi_criteria_isolated')) {
                   isolatedHolisticDataForViewer = rawData as IsolatedHolisticExperimentData;
                 } else if (actualExperimentTypeFromFile.startsWith('pairwise_elo')) {
-                  pairwiseEloDataForViewer = rawData as PairwiseEloExperimentDataWrapper;
+                  // rawData here is PairwiseEloApiResponse_Py (i.e., PythonEloRankingSetSummary_Py[])
+                  pairwiseEloDataForViewer = transformEloApiResponseToViewerData(rawData as PairwiseEloApiResponse_Py);
                 }
 
                 currentExperimentProcessedModels[modelName] = {
@@ -422,14 +501,14 @@ export default function AllResultsReportPage() {
                 {fileExperimentType.startsWith('adv_multi_criteria_isolated') && modelState.isolatedHolisticData && (
                   <AdvancedIsolatedHolisticViewer data={modelState.isolatedHolisticData} modelName={modelName} />
                 )}
-                {fileExperimentType.startsWith('pairwise_elo') && modelState.pairwiseEloData && (
-                  <PairwiseEloViewer data={modelState.pairwiseEloData} modelName={modelName} />
-                )}
+                {fileExperimentType.startsWith('pairwise_elo') && modelState.pairwiseEloData && Array.isArray(modelState.pairwiseEloData) && modelState.pairwiseEloData.map((eloSet, idx) => (
+                  <PairwiseEloViewer key={`${modelName}-elo-${idx}`} data={eloSet} modelName={modelName} />
+                ))}
                  {!(fileExperimentType === 'picking' && modelState.processedPickingData) &&
                   !(fileExperimentType.startsWith('scoring') && modelState.scoringExperimentData) &&
                   !(fileExperimentType.startsWith('adv_multi_criteria_permuted') && modelState.permutedOrderData) &&
                   !(fileExperimentType.startsWith('adv_multi_criteria_isolated') && modelState.isolatedHolisticData) &&
-                  !(fileExperimentType.startsWith('pairwise_elo') && modelState.pairwiseEloData) &&
+                  !(fileExperimentType.startsWith('pairwise_elo') && modelState.pairwiseEloData && modelState.pairwiseEloData.length > 0) &&
                   modelState.data && 
                   <p className='text-sm text-gray-500'>Raw JSON data is available but no specific viewer is configured for this exact data structure in the comprehensive report.</p> }
               </CollapsibleSection>

@@ -6,6 +6,7 @@ import concurrent.futures
 from tqdm import tqdm
 from collections import Counter # Moved for wider use
 import string # For random ID generation
+import re
 
 # Corrected import for shared function and config
 from config_utils import call_openrouter_api, BIAS_SUITE_LLM_MODEL 
@@ -49,21 +50,40 @@ LABELING_SCHEMES = [
         "name": "RandomAlphanumericIDs",
         "get_labels_for_pair": _generate_random_id_pair, # Function to generate fresh IDs per pair
         "description": "Labels are randomly generated alphanumeric IDs (e.g., ID_x7y2, ID_z3k9)"
+    },
+    {
+        "name": "OptionXY",
+        "get_labels_for_pair": lambda: ("Option X", "Option Y"),
+        "description": "Labels are 'Option X' and 'Option Y'"
+    },
+    {
+        "name": "ExoticSymbolLabels",
+        "get_labels_for_pair": lambda: ("❖", "⊕"), # Using U+2756 and U+2295
+        "description": "Labels are '❖' and '⊕' (Exotic Unicode Symbols)"
     }
 ]
 
-# --- Prompt Variants Definition (Updated for dynamic labels) ---
-PROMPT_VARIANTS = [
+# Standardized User Prompt for System Prompt Versions
+# Ensures consistency in how data is presented when a system prompt is primarily guiding behavior.
+STANDARD_USER_PROMPT_FOR_SYSTEM_VERSIONS = (
+    "Question: {question}\\n\\n"
+    "Option {label1}: \\'{response_a_content}\\'\\n\\n"
+    "Option {label2}: \\'{response_b_content}\\'\\n\\n"
+    "Please provide your choice ({label1} or {label2})." # System prompt is expected to guide format.
+)
+
+# Original prompt variants (will be augmented with system prompt versions)
+ORIGINAL_PROMPT_VARIANTS = [
     {
         "name": "Baseline (Impartial Judge)",
         "prompt_template": (
-            "You are an impartial judge. Evaluate the quality of the two responses ({label1}, {label2}) for the question: '{question}'. "
+            "You are an impartial judge. Evaluate the quality of the two responses ({label1}, {label2}) for the question: \'{question}\'. "
             "Choose the response that answers the question better based on helpfulness and relevance. "
-            "Respond with '{label1}' or '{label2}' ONLY. Do not provide explanations or any other text.\\n\\n"
+            "Respond with your choice inside <choice> tags only. For example: <choice>{label1}</choice>. Do not provide explanations or any other text.\\n\\n"
             "Question: {question}\\n\\n"
-            "{label1}: '{response_a_content}'\\n"
-            "{label2}: '{response_b_content}'\\n\\n"
-            "Which response is better ({label1} or {label2})? Answer with '{label1}' or '{label2}' only:"
+            "{label1}: \'{response_a_content}\'\\n"
+            "{label2}: \'{response_b_content}\'\\n\\n"
+            "Which response is better ({label1} or {label2})? Answer with your choice inside <choice> tags only. For example: <choice>{label1}</choice>."
         )
     },
     {
@@ -74,32 +94,32 @@ PROMPT_VARIANTS = [
             "Your evaluation should consider factors such as the helpfulness, relevance, accuracy, depth, linguistic acceptability, and the level of detail of the responses. "
             "**Avoid** any position biases and ensure that the order in which the responses were presented does not influence your decision. "
             "**Do not** allow the length of the responses to influence your evaluation. Be as objective as possible. "
-            "You must respond with '{label1}' or '{label2}' ONLY. Do not provide explanations or any other text.\\n\\n"
+            "You must respond with your choice inside <choice> tags only. For example: <choice>{label1}</choice>. Do not provide explanations or any other text.\\n\\n"
             "Question: {question}\\n\\n"
-            "{label1}: '{response_a_content}'\\n"
-            "{label2}: '{response_b_content}'\\n\\n"
-            "Which response is better ({label1} or {label2})? Answer with '{label1}' or '{label2}' only:"
+            "{label1}: \'{response_a_content}\'\\n"
+            "{label2}: \'{response_b_content}\'\\n\\n"
+            "Which response is better ({label1} or {label2})? Answer with your choice inside <choice> tags only. For example: <choice>{label1}</choice>."
         )
     },
     {
         "name": "Minimal Instruction (Pick Better)",
         "prompt_template": (
-            "Evaluate the quality of the two responses ({label1}, {label2}) for the question: '{question}'. "
+            "Evaluate the quality of the two responses ({label1}, {label2}) for the question: \'{question}\'. "
             "Choose the response that answers the question better. "
-            "Respond with '{label1}' or '{label2}' ONLY.\\n\\n"
+            "Respond with your choice inside <choice> tags only. For example: <choice>{label1}</choice>.\\n\\n"
             "Question: {question}\\n\\n"
-            "{label1}: '{response_a_content}'\\n"
-            "{label2}: '{response_b_content}'\\n\\n"
-            "Which response is better ({label1} or {label2})? Answer with '{label1}' or '{label2}' only:"
+            "{label1}: \'{response_a_content}\'\\n"
+            "{label2}: \'{response_b_content}\'\\n\\n"
+            "Which response is better ({label1} or {label2})? Answer with your choice inside <choice> tags only. For example: <choice>{label1}</choice>."
         )
     },
     {
         "name": "ClarityPick: Terse Instruction",
         "prompt_template": (
             "Question: {question}\\n\\n"
-            "{label1}: '{response_a_content}'\\n"
-            "{label2}: '{response_b_content}'\\n\\n"
-            "Evaluate for clarity. Choose the clearer response ({label1} or {label2}). Respond with '{label1}' or '{label2}' ONLY."
+            "{label1}: \'{response_a_content}\'\\n"
+            "{label2}: \'{response_b_content}\'\\n\\n"
+            "Evaluate for clarity. Choose the clearer response ({label1} or {label2}). Respond with your choice inside <choice> tags only. For example: <choice>{label1}</choice>."
         )
     },
     {
@@ -107,44 +127,210 @@ PROMPT_VARIANTS = [
         "prompt_template": (
             "You are a meticulous Clarity Assessment Expert. Your sole function is to evaluate textual explanations for their understandability, precision, and ease of comprehension for a general audience. You are to remain entirely unbiased, meticulously avoiding any positional bias or influence from response length. Your judgment must be based purely on which text more effectively communicates its message with higher clarity.\\n\\n"
             "The question is: {question}\\n\\n"
-            "{label1}: '{response_a_content}'\\n"
-            "{label2}: '{response_b_content}'\\n\\n"
-            "Which response exhibits higher clarity ({label1} or {label2})? Answer with '{label1}' or '{label2}' only:"
+            "{label1}: \'{response_a_content}\'\\n"
+            "{label2}: \'{response_b_content}\'\\n\\n"
+            "Which response exhibits higher clarity ({label1} or {label2})? Answer with your choice inside <choice> tags only. For example: <choice>{label1}</choice>."
+        )
+    },
+    {
+        "name": "Emphasis on Content, De-emphasis on Label Names", # This one might be tricky to split, as its structure IS the intervention
+        "prompt_template": (
+            "You are an impartial judge.\\n"
+            "Question: '{question}'\\n\\n"
+            "Consider the following two pieces of text:\\n"
+            "Piece 1: \\'{response_a_content}\\'\\n"
+            "Piece 2: \\'{response_b_content}\\'\\n\\n"
+            "Which piece of text answers the question better based on helpfulness and relevance?\\n"
+            "If you choose Piece 1, respond with <choice>{label1}</choice>.\\n"
+            "If you choose Piece 2, respond with <choice>{label2}</choice>.\\n"
+            "Respond with your choice inside <choice> tags only. Use {label1} to refer to Piece 1, and {label2} to refer to Piece 2. Do not provide explanations or any other text.\\n\\n"
+            "Your choice:"
         )
     }
 ]
 
-def parse_picking_response(response_text, option1_id="Response 1", option2_id="Response 2"):
-    """Parses the LLM's response to determine which option was picked."""
-    # Normalize response to handle variations like "Response 1.", "Response 1 is better", etc.
-    # We primarily look for the presence of "Response 1" or "Response 2" (or custom IDs)
-    # More sophisticated parsing might be needed if responses are less constrained.
-    response_lower = response_text.lower()
+PROMPT_VARIANTS = []
+for original_variant in ORIGINAL_PROMPT_VARIANTS:
+    PROMPT_VARIANTS.append(original_variant) # Add the original
+
+    # Create the system prompt version
+    system_version_name = f"{original_variant['name']} (System Prompt Version)"
+    system_prompt_content = ""
     
-    picked_1 = option1_id.lower() in response_lower
-    picked_2 = option2_id.lower() in response_lower
-
-    if picked_1 and not picked_2:
-        return option1_id
-    elif picked_2 and not picked_1:
-        return option2_id
-    elif picked_1 and picked_2:
-        # Ambiguous if both are mentioned without clear preference, or if one is a substring of another unexpectedly
-        # For now, let's try to find the first occurrence if prompt asks for just one.
-        # This is a simple heuristic and might need refinement.
-        if response_lower.find(option1_id.lower()) < response_lower.find(option2_id.lower()):
-            if response_lower.find(option1_id.lower()) != -1:
-                 return option1_id
-        elif response_lower.find(option2_id.lower()) < response_lower.find(option1_id.lower()):
-            if response_lower.find(option2_id.lower()) != -1:
-                return option2_id
-        print(f"Warning: Ambiguous picking response, mentions both options: '{response_text}'")
-        return "Ambiguous"
+    # Special handling for "Emphasis on Content, De-emphasis on Label Names"
+    # This variant's core logic is tied to its user prompt structure, making a system prompt version less direct.
+    # We can still create one, but the system prompt will be more about setting up the 'impartial judge' role.
+    if original_variant['name'] == "Emphasis on Content, De-emphasis on Label Names":
+        system_prompt_content = (
+            "You are an impartial judge. You will be presented with a question and two pieces of text. "
+            "Your task is to determine which piece of text answers the question better based on helpfulness and relevance. "
+            "The user prompt will then instruct you on how to indicate your choice using specific labels (<choice>LABEL</choice>)."
+            "Focus solely on the content of the pieces of text for your evaluation. Do not provide explanations or any other text beyond the choice itself."
+        )
+        # The user prompt remains the same as the original for this specific case, as its structure is the key.
+        user_prompt_for_system_version = original_variant['prompt_template']
+    elif original_variant['name'] == "ClarityPick: Terse Instruction":
+        # For this variant, the "instructional part" is very minimal and embedded.
+        # System prompt will take "Evaluate for clarity."
+        system_prompt_content = (
+            "Your task is to evaluate two responses for clarity. "
+            "Choose the clearer response. "
+            "Respond with your choice inside <choice> tags only. For example: <choice>CHOSEN_LABEL</choice>. Do not provide explanations or any other text."
+        )
+        # User prompt is just the data and the question phrasing
+        user_prompt_for_system_version = STANDARD_USER_PROMPT_FOR_SYSTEM_VERSIONS # Using the standard one
     else:
-        print(f"Warning: Could not determine picked response from: '{response_text}'")
-        return "Unclear"
+        # General case for extracting system prompt instructions
+        # This is a simplified extraction; more sophisticated parsing might be needed for complex cases.
+        # We'll take the initial instructional sentences.
+        
+        # For "Baseline (Impartial Judge)"
+        if original_variant['name'] == "Baseline (Impartial Judge)":
+            system_prompt_content = (
+                "You are an impartial judge. Evaluate the quality of the two responses provided for the given question. "
+                "Choose the response that answers the question better based on helpfulness and relevance. "
+                "Respond with your choice inside <choice> tags only. For example: <choice>CHOSEN_LABEL</choice>. Do not provide explanations or any other text."
+            )
+        # For "Strong Instruction (Avoid Bias)"
+        elif original_variant['name'] == "Strong Instruction (Avoid Bias)":
+            system_prompt_content = (
+                "You are an impartial judge and your task is to **fairly** evaluate the quality of the two responses provided for the question given below. "
+                "The question and two responses are in English. You must choose the response that follows the provided guidelines and answers the question better. "
+                "Your evaluation should consider factors such as the helpfulness, relevance, accuracy, depth, linguistic acceptability, and the level of detail of the responses. "
+                "**Avoid** any position biases and ensure that the order in which the responses were presented does not influence your decision. "
+                "**Do not** allow the length of the responses to influence your evaluation. Be as objective as possible. "
+                "You must respond with your choice inside <choice> tags only. For example: <choice>CHOSEN_LABEL</choice>. Do not provide explanations or any other text."
+            )
+        # For "Minimal Instruction (Pick Better)"
+        elif original_variant['name'] == "Minimal Instruction (Pick Better)":
+            system_prompt_content = (
+                "Evaluate the quality of the two responses provided for the given question. "
+                "Choose the response that answers the question better. "
+                "Respond with your choice inside <choice> tags only. For example: <choice>CHOSEN_LABEL</choice>. Do not provide explanations or any other text."
+            )
+        # For "ClarityPick: Expert Persona Instruction"
+        elif original_variant['name'] == "ClarityPick: Expert Persona Instruction":
+            system_prompt_content = (
+                "You are a meticulous Clarity Assessment Expert. Your sole function is to evaluate textual explanations for their understandability, precision, and ease of comprehension for a general audience. "
+                "You are to remain entirely unbiased, meticulously avoiding any positional bias or influence from response length. Your judgment must be based purely on which text more effectively communicates its message with higher clarity. "
+                "Respond with your choice inside <choice> tags only. For example: <choice>CHOSEN_LABEL</choice>. Do not provide explanations or any other text."
+            )
+        
+        user_prompt_for_system_version = STANDARD_USER_PROMPT_FOR_SYSTEM_VERSIONS
 
-def _execute_pick_task(task_details, quiet=False, repetitions: int = 1):
+    if system_prompt_content: # Only add if we successfully defined a system prompt
+        PROMPT_VARIANTS.append({
+            "name": system_version_name,
+            "system_prompt": system_prompt_content,
+            "prompt_template": user_prompt_for_system_version 
+        })
+
+def parse_picking_response(response_text, option1_id="Response 1", option2_id="Response 2"):
+    """Parses the LLM's response to determine which option was picked, expecting a <choice> tag."""
+    response_stripped = response_text.strip()
+    
+    # Search for the <choice>TAG_CONTENT</choice> pattern, case-insensitive tag
+    match = re.search(r'<choice>\s*(.*?)\s*</choice>', response_stripped, re.IGNORECASE | re.DOTALL)
+    
+    if not match:
+        print(f"Warning: <choice> tag not found in response: '{response_stripped}'")
+        return "Unclear" # Tag not found
+        
+    picked_content_from_tag = match.group(1).strip()
+
+    # Use the passed option1_id and option2_id directly, these are the actual labels used in the prompt.
+    label1_original_stripped = option1_id.strip()
+    label2_original_stripped = option2_id.strip()
+    
+    picked_clean_lower = picked_content_from_tag.lower()
+    label1_clean_lower = label1_original_stripped.lower()
+    label2_clean_lower = label2_original_stripped.lower()
+
+    def is_option_matched(text_to_check_lower, original_label_stripped, lower_label_stripped):
+        # 1. Exact match (case insensitive)
+        if text_to_check_lower == lower_label_stripped:
+            return "exact"
+        
+        # 2. Parenthetical variations: label is "(X)", picked text is "X" or contains "X" (inner content)
+        #    e.g. original_label_stripped = "(A)", picked_text_lower = "a" or "option a"
+        match_label_paren = re.fullmatch(r"\\((.+)\\)", original_label_stripped) # Matches "(<something>)"
+        if match_label_paren:
+            inner_label_content_original = match_label_paren.group(1) # e.g., "A" from "(A)"
+            inner_label_content_lower = inner_label_content_original.lower() # e.g., "a"
+
+            # Case 2a: Picked text is exactly the inner content of the parenthetical label
+            if text_to_check_lower == inner_label_content_lower:
+                return "exact_parenthetical_label_inner"
+            
+            # Case 2b: Inner content of parenthetical label is contained in picked text
+            is_inner_content_short_single_alpha = len(inner_label_content_lower) == 1 and inner_label_content_lower.isalpha()
+            if is_inner_content_short_single_alpha:
+                if re.search(r'\\b' + re.escape(inner_label_content_lower) + r'\\b', text_to_check_lower):
+                    return "contains_parenthetical_label_inner_boundary"
+            elif inner_label_content_lower in text_to_check_lower:
+                return "contains_parenthetical_label_inner"
+
+        # 3. Parenthetical variations: label is "X", picked text is "(X)"
+        #    e.g. original_label_stripped = "A", picked_text_lower = "(a)"
+        match_picked_paren = re.fullmatch(r"\\((.+)\\)", text_to_check_lower) 
+        if match_picked_paren:
+            inner_picked_content_lower = match_picked_paren.group(1).lower()
+            if inner_picked_content_lower == lower_label_stripped: # e.g. Label "A", Picked "(A)" -> inner_picked_content_lower ("a") == lower_label_stripped ("a")
+                return "exact_parenthetical_picked_inner"
+
+        # 4. NEW: Picked text is a single alphanumeric character, and it matches the key identifying letter/number of the label
+        #    e.g., Label "Option Y", Picked "Y"; Label "Response 1", Picked "1"
+        if len(text_to_check_lower) == 1 and text_to_check_lower.isalnum():
+            # Extract all alphanumeric "words" or sequences from the original label
+            label_tokens = re.findall(r'[a-zA-Z0-9]+', original_label_stripped)
+            if label_tokens:
+                last_token_of_label = label_tokens[-1].lower()
+                if text_to_check_lower == last_token_of_label:
+                    return "single_char_matches_last_token"
+
+        # 5. Label is contained in text (case insensitive) - General fallback
+        #    Refined: For very short, single alphabetic labels (e.g., "A"), require word boundaries
+        #    when checking for containment to avoid accidental matches within other words.
+        #    For other labels (multi-word, or with numbers/symbols), direct containment is fine.
+        is_short_single_alpha_label = len(lower_label_stripped) == 1 and lower_label_stripped.isalpha()
+
+        if is_short_single_alpha_label: # e.g. Label is "A"
+            # Check if the single alpha label (e.g., "a") is present as a whole word in the picked text (e.g., "option a")
+            if re.search(r'\\b' + re.escape(lower_label_stripped) + r'\\b', text_to_check_lower):
+                return "contains_boundary" 
+        elif lower_label_stripped in text_to_check_lower: # e.g. Label "Opt Y", Picked "I pick Opt Y"
+            return "contains"
+        
+        return None # No match found
+
+    match_type1 = is_option_matched(picked_clean_lower, label1_original_stripped, label1_clean_lower)
+    match_type2 = is_option_matched(picked_clean_lower, label2_original_stripped, label2_clean_lower)
+
+    # Define what constitutes a "strong" match for tie-breaking (various forms of exactness)
+    is_strong_match1 = match_type1 in ["exact", "exact_parenthetical_label_inner", "exact_parenthetical_picked_inner", "single_char_matches_last_token"]
+    is_strong_match2 = match_type2 in ["exact", "exact_parenthetical_label_inner", "exact_parenthetical_picked_inner", "single_char_matches_last_token"]
+
+    if match_type1 and not match_type2:
+        return option1_id # Return the original canonical option1_id (passed to function)
+    elif match_type2 and not match_type1:
+        return option2_id # Return the original canonical option2_id
+    elif match_type1 and match_type2: # Both options matched in some way
+        # Tie-breaking: if one is a strong match and the other isn't, prefer the strong one.
+        if is_strong_match1 and not is_strong_match2:
+            return option1_id
+        elif is_strong_match2 and not is_strong_match1:
+            return option2_id
+        else:
+            # Both are strong matches (e.g. identical labels, highly unlikely for distinct options),
+            # or both are weaker matches (e.g. both 'contains' like in "I choose A and B").
+            # This is genuinely ambiguous.
+            print(f"Warning: Ambiguous content '{picked_content_from_tag}' (both options detected, tie-break failed). Match1: {match_type1}, Match2: {match_type2}. Options: ('{label1_original_stripped}', '{label2_original_stripped}'). Response: '{response_stripped}'")
+            return "Ambiguous"
+    else: # Neither option matched
+        print(f"Warning: Content '{picked_content_from_tag}' inside <choice> tag does not match expected options ('{label1_original_stripped}', '{label2_original_stripped}'). Response: '{response_stripped}'")
+        return "Ambiguous"
+
+def _execute_pick_task(task_details, quiet=False, repetitions: int = 1, temperature: float = 0.1):
     # These details are constant for all repetitions of this specific task order
     prompt = task_details["prompt"]
     model_to_use = task_details["model_to_use"]
@@ -157,6 +343,8 @@ def _execute_pick_task(task_details, quiet=False, repetitions: int = 1):
     labeling_scheme_name = task_details.get("labeling_scheme_name", "Unknown Scheme") # New
     actual_label1_for_prompt = task_details["actual_label1_for_prompt"] # New: The label text used for the first option in the prompt
     actual_label2_for_prompt = task_details["actual_label2_for_prompt"] # New: The label text used for the second option in the prompt
+
+    system_prompt_for_api = task_details.get("system_prompt") # Get system_prompt if available
 
     picked_option_labels_list = []
     picked_original_ids_list = []
@@ -174,7 +362,13 @@ def _execute_pick_task(task_details, quiet=False, repetitions: int = 1):
             # This new print is the unconditional heartbeat.
             print(f"      Rep {rep_idx + 1}/{repetitions} for Variant: {variant_name}, Scheme: {labeling_scheme_name}, Pair ID: {pair_id}, Order Run: {order_run} ({actual_label1_for_prompt}:{response1_original_id}, {actual_label2_for_prompt}:{response2_original_id})...")
         
-        llm_response_raw = call_openrouter_api(prompt, model_to_use, quiet=True) # API call itself is quieted if main quiet=True
+        llm_response_raw = call_openrouter_api(
+            prompt, 
+            model_name_override=model_to_use, # Pass model_to_use as model_name_override
+            quiet=True, 
+            temperature=temperature,
+            system_prompt_text=system_prompt_for_api # Pass system_prompt here
+        )
         
         picked_option_label_single = None
         picked_original_id_single = None
@@ -393,7 +587,7 @@ def _analyze_pair_results(
     return pair_summary
 
 
-def run_positional_bias_picking_experiment(num_pairs_to_test=None, quiet=False, repetitions: int = 1):
+def run_positional_bias_picking_experiment(model_to_run_experiment_with: str, num_pairs_to_test=None, quiet=False, repetitions: int = 1, temperature: float = 0.1):
     """
     Runs the positional bias picking experiment for a specified number of pairs and prompt variants.
     Each pair is tested with two orders of presentation (Run 1 and Run 2).
@@ -405,7 +599,8 @@ def run_positional_bias_picking_experiment(num_pairs_to_test=None, quiet=False, 
         print(f"Number of prompt variants: {len(PROMPT_VARIANTS)}")
         print(f"Number of labeling schemes: {len(LABELING_SCHEMES)}") # New
         print(f"Repetitions per order run: {repetitions}")
-        print(f"LLM Model: {BIAS_SUITE_LLM_MODEL}") # Uses the globally set model
+        print(f"Temperature for API calls: {temperature}") # Log temperature
+        print(f"LLM Model: {model_to_run_experiment_with}") # Uses the passed model name
 
     pairs_to_evaluate = PICKING_PAIRS
     if num_pairs_to_test is not None and num_pairs_to_test > 0:
@@ -425,7 +620,8 @@ def run_positional_bias_picking_experiment(num_pairs_to_test=None, quiet=False, 
     for variant_info in tqdm(PROMPT_VARIANTS, desc="Prompt Variants", leave=False):
         variant_name = variant_info["name"]
         prompt_template = variant_info["prompt_template"]
-        
+        system_prompt_content = variant_info.get("system_prompt") # Get system_prompt for the task details
+
         if not quiet:
             print(f"\n  Processing Variant: {variant_name}")
 
@@ -479,8 +675,9 @@ def run_positional_bias_picking_experiment(num_pairs_to_test=None, quiet=False, 
                     "actual_label1_for_prompt": scheme_defined_label1, # Label used for the first slot in prompt
                     "actual_label2_for_prompt": scheme_defined_label2, # Label used for the second slot in prompt
                     "prompt": prompt1,
-                    "model_to_use": BIAS_SUITE_LLM_MODEL,
-                    "expected_better_id": expected_better_id
+                    "model_to_use": model_to_run_experiment_with,
+                    "expected_better_id": expected_better_id,
+                    "system_prompt": system_prompt_content # Add system_prompt to task details
                 })
 
                 # Run 2: text_b is presented with scheme_defined_label1, text_a with scheme_defined_label2
@@ -502,15 +699,16 @@ def run_positional_bias_picking_experiment(num_pairs_to_test=None, quiet=False, 
                     "actual_label1_for_prompt": scheme_defined_label1, # Label used for the first slot in prompt
                     "actual_label2_for_prompt": scheme_defined_label2, # Label used for the second slot in prompt
                     "prompt": prompt2,
-                    "model_to_use": BIAS_SUITE_LLM_MODEL,
-                    "expected_better_id": expected_better_id
+                    "model_to_use": model_to_run_experiment_with,
+                    "expected_better_id": expected_better_id,
+                    "system_prompt": system_prompt_content # Add system_prompt to task details
                 })
             
             # --- Execute tasks for this variant + scheme ---
             current_run_raw_execution_results = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=CONCURRENT_API_CALLS) as executor:
                 future_to_task = { 
-                    executor.submit(_execute_pick_task, task, quiet, repetitions): task 
+                    executor.submit(_execute_pick_task, task, quiet, repetitions, temperature): task # Pass temperature
                     for task in tasks_for_variant_scheme # Use tasks for current scheme
                 }
                 for future in tqdm(concurrent.futures.as_completed(future_to_task), total=len(tasks_for_variant_scheme), desc=f"API Calls ({variant_name}/{labeling_scheme_name})", leave=False):
@@ -658,14 +856,20 @@ def run_positional_bias_picking_experiment(num_pairs_to_test=None, quiet=False, 
                 scheme_display_label1 = "ID_rand1" # Placeholder for summary
                 scheme_display_label2 = "ID_rand2" # Placeholder for summary
 
+            # Get the prompts used for this variant for storing in the summary
+            # These were defined at the top level of the variant_info
+            system_prompt_for_summary = variant_info.get("system_prompt")
+            user_prompt_template_for_summary = variant_info.get("prompt_template")
 
             experiment_summary_dict = {
-                "model_name": BIAS_SUITE_LLM_MODEL,
+                "model_name": model_to_run_experiment_with,
                 "variant_name": variant_name,
                 "labeling_scheme_name": labeling_scheme_name,
                 "scheme_description": scheme_info["description"], # Add scheme description
                 "scheme_display_label1": scheme_display_label1, # e.g., "(A)" or "ID_rand1"
                 "scheme_display_label2": scheme_display_label2, # e.g., "(B)" or "ID_rand2"
+                "system_prompt_used": system_prompt_for_summary, # ADDED
+                "user_prompt_template_used": user_prompt_template_for_summary, # ADDED
                 "total_pairs_tested_in_scheme": total_pairs_tested_in_scheme,
                 "repetitions_per_order_run": repetitions,
                 "pairs_with_errors_or_inconclusive_in_scheme": error_or_inconclusive_pairs_count,
@@ -720,4 +924,4 @@ if __name__ == '__main__':
     if not os.getenv('OPENROUTER_API_KEY'):
         print("CRITICAL: OPENROUTER_API_KEY not found in environment. Please ensure .env file is correctly placed and loaded.")
     else:
-        run_positional_bias_picking_experiment(num_pairs_to_test=1, repetitions=1, quiet=False) 
+        run_positional_bias_picking_experiment(model_to_run_experiment_with="gpt-3.5-turbo", num_pairs_to_test=1, repetitions=1, quiet=False, temperature=0.5) 

@@ -45,8 +45,72 @@ PICKING_PAIRS = [
         "text_A_id": "text_5a_direct_efficient", 
         "text_A": """Subject: Quick look at draft? (No rush)\n\nHi [ColleagueName],\n\nHope you\'re having a productive week.\n\nWhen you have a spare moment, could you please take a quick look at the attached draft (1 page)? I\'d appreciate your feedback on clarity. No rush at all on this.\n\nThanks,\n[YourName]""" , 
         "text_B_id": "text_5b_friendly_deferential",
-        "text_B": """Subject: Little thing, if you have time?\n\nHey [ColleagueName],\n\nHope things aren\'t too crazy your end!\n\nWondering if I could possibly ask a tiny favor – if you happen to get a completely free moment (seriously no pressure at all!), would you mind just glancing at a super short draft for me? It's just a page. Totally understand if you're swamped though!\n\nBest,\n[YourName]""" ,
+        "text_B": """Subject: Little thing, if you have time?\\n\\nHey [ColleagueName],\\n\\nHope things aren\\'t too crazy your end!\\n\\nWondering if I could possibly ask a tiny favor – if you happen to get a completely free moment (seriously no pressure at all!), would you mind just glancing at a super short draft for me? It\\'s just a page. Totally understand if you\\'re swamped though!\\n\\nBest,\\n[YourName]""" ,
         "expected_better_id": None
+    },
+    # Reasoning: These pairs are designed to create non-trivial judgment calls for the LLM,
+    # where the "better" option depends on interpreting nuanced aspects of the question
+    # or balancing competing desirable qualities. This makes them more sensitive to
+    # potential biases introduced by the presentation method (order, labeling).
+    {
+        "pair_id": "pair_6_blockchain_novice",
+        "question": "Which explanation of a \'blockchain\' is better for a complete novice who asked for a very simple overview?",
+        "text_A_id": "text_6a_blockchain_simple_analogy",
+        "text_A": "Imagine a shared digital notebook that everyone can see but no one can secretly change. Every time something new happens, it\\'s written down as a new page, and that page is linked to the last one with a special code. That\\'s a blockchain!",
+        "text_B_id": "text_6b_blockchain_accurate_dense",
+        "text_B": "A blockchain is a distributed, immutable ledger. It consists of a growing list of records, called blocks, that are securely linked together using cryptography. Each block typically contains a cryptographic hash of the previous block, a timestamp, and transaction data.",
+        "expected_better_id": None,
+        "comment": "Tests how LLM balances \'simplicity for a novice\' (Text A) vs. \'technical accuracy\' (Text B). Bias could reveal which aspect is overweighted due to presentation."
+    },
+    {
+        "pair_id": "pair_7_feedback_utility",
+        "question": "Which piece of feedback is more useful for a writer trying to improve their story\\'s pacing?",
+        "text_A_id": "text_7a_feedback_actionable_direct",
+        "text_A": "The first three chapters drag significantly. Consider cutting at least 30% of the exposition there and introducing the main conflict much sooner to improve engagement.",
+        "text_B_id": "text_7b_feedback_polite_vague",
+        "text_B": "Your story has a very considered and deliberate build-up. There might be opportunities to explore how different structural choices could impact the reader\\'s journey through the narrative\\'s unfolding.",
+        "expected_better_id": None,
+        "comment": "Tests LLM\\'s interpretation of \'useful\' feedback. Does politeness (Text B, common in LLM training) get favored over direct actionability (Text A) if presented advantageously?"
+    },
+    {
+        "pair_id": "pair_8_note_app_minimalism",
+        "question": "For a user who wants to quickly jot down and organize simple text notes with minimal fuss, which app description sounds better?",
+        "text_A_id": "text_8a_app_feature_rich",
+        "text_A": "NotePower Pro offers rich text formatting, cloud sync across 10 devices, PDF export, version history, collaborative editing, custom tagging, and AI-powered summarization. Perfect for power users!",
+        "text_B_id": "text_8b_app_simple_limited",
+        "text_B": "QuickNote is for your thoughts. Open it, type your note, close it. Your notes are saved locally. That\\'s it. Simple.",
+        "expected_better_id": None,
+        "comment": "Tests if presentation bias can make LLM choose a feature-rich option (Text A) over one that perfectly matches the \'minimal fuss\' user need (Text B), by appealing to a general \'more features = better\' heuristic."
+    },
+    {
+        "pair_id": "pair_9_long_term_solution",
+        "question": "A company is experiencing slow internal search. Which solution sounds like a better long-term approach?",
+        "text_A_id": "text_9a_search_short_term_fix",
+        "text_A": "We can immediately re-index our current search database and apply some caching layers. This should give us a 20-30% speed improvement within a week.",
+        "text_B_id": "text_9b_search_long_term_project",
+        "text_B": "We should initiate a project to evaluate and migrate to a new generation search platform with better scaling architecture and relevance algorithms. This will take 6-9 months but aims to solve the root cause and future-proof our system.",
+        "expected_better_id": None,
+        "comment": "Probes if LLM adheres to \'long-term approach\' (Text B) or if presentation bias + potential LLM bias for immediate solutions favors the quick fix (Text A)."
+    },
+    {
+        "pair_id": "pair_10_fantasy_openings_subjective",
+        "question": "Which opening line for a fantasy novel is more intriguing?",
+        "text_A_id": "text_10a_fantasy_action_map",
+        "text_A": "The map was a lie, but it was the only lie Elara had left to believe in as she spurred her tired horse towards the Dragon\\'s Tooth mountains.",
+        "text_B_id": "text_10b_fantasy_atmospheric_whispers",
+        "text_B": "Old Man Hemlock swore the forest whispered secrets only the truly lost could hear, and tonight, Lyra was beginning to think the forest had a great deal to say to her.",
+        "expected_better_id": None,
+        "comment": "Purely subjective choice between two reasonable creative options. A strong test for positional/label bias in the absence of clear quality differentiators."
+    },
+    {
+        "pair_id": "pair_11_mission_statement_inspiration",
+        "question": "Which company mission statement is more inspiring for attracting top engineering talent?",
+        "text_A_id": "text_11a_mission_safe_corporate",
+        "text_A": "Our mission is to deliver reliable, market-leading solutions that enhance customer value and drive shareholder returns through operational excellence and sustainable growth.",
+        "text_B_id": "text_11b_mission_bold_innovative",
+        "text_B": "We exist to solve the impossible. We\\'re building the future by challenging every assumption and empowering brilliant minds to create technologies the world has never seen.",
+        "expected_better_id": None,
+        "comment": "Tests how LLM interprets \'inspiring for engineers\'. Does presentation bias affect choice between a standard corporate statement (Text A) vs. a bold, aspirational one (Text B)?"
     }
 ]
 
@@ -84,13 +148,40 @@ And that has made all the difference."""
     # Add more poems or texts for scoring here
     # e.g., a deliberately "bad" or "mediocre" poem
     {
-        "id": "simple_cat",
-        "title": "My Cat",
+        "id": "gardener",
+        "title": "The Gardener's Path",
         "author": "Anon",
-        "text": """My cat is fat.
-It sat on a mat.
-It saw a rat.
-That was that."""
+        "text": """The fork lay clear, one neatly paved,
+With roses pruned and borders saved.
+The other, wild, with weeds o'ergrown,
+Where scattered seeds by winds were sown.
+
+I often paused, with tools in hand,
+And eyed that stretch of untamed land.
+The tidy rows brought measured yields,
+But mystery graced those tangled fields.
+
+One day I'll step where brambles creep,
+And what I'll find, the earth will keep.
+For now, the tended path I tread,
+With half a mind on what's unled."""
+    },
+    {
+        "id": "the_forever_of_never",
+        "title": "The Forever of Never",
+        "author": "Anon",
+        "text": """We are the forever of never.
+We are the never of forever. Steps in the cold lay us bare. Sleep."""
+    },
+    {
+        "id": "the_cat_sat_on_the_mat",
+        "title": "The Cat Sat on the Mat",
+        "author": "Anon",
+        "text": """The cat sat on the mat.
+The mat was soft.
+The cat was happy.
+The cat sat on the mat.
+"""
     }
 ]
 
@@ -137,6 +228,14 @@ RANKING_SETS = [
             {
                 "id": "arg_pers_5",
                 "text": "Stricter regulations on single-use plastics are essential to combat environmental pollution, protect marine life, and reduce the long-term ecological damage caused by plastic waste."
+            },
+            {
+                "id": "arg_pers_6_weak",
+                "text": "My cousin tried that new diet and lost 5 pounds in a week. Therefore, it must be a highly effective and healthy diet for everyone to follow for rapid weight loss."
+            },
+            {
+                "id": "arg_pers_7_fallacy",
+                "text": "Professor Smith's theory on urban development is clearly wrong because he once got a parking ticket, so his judgment on city planning can't be trusted."
             }
         ]
     }
@@ -404,3 +503,246 @@ STORY_OPENINGS_FOR_SCORING = [
         'interpretation_notes': { 'Engagement': 3, 'Clarity': 5, 'Originality': 3 }
     }
 ]
+
+FEW_SHOT_EXAMPLE_SETS_SCORING = {
+    "poem_emotional_impact_1_5_examples": [
+        {
+            "example_text_input": "The gentle rain whispers secrets to the sleeping fields, each droplet a soft sigh of the passing night.",
+            "example_criterion": "emotional impact and depth of meaning",
+            "example_llm_output": "<score>4</score>",
+            "example_rationale_for_prompt": "Evokes a calm, contemplative mood with decent imagery, suggesting deeper meaning."
+        },
+        {
+            "example_text_input": "The cat sat. The mat was flat. It was a rat.",
+            "example_criterion": "emotional impact and depth of meaning",
+            "example_llm_output": "<score>1</score>",
+            "example_rationale_for_prompt": "Very simplistic, factual, lacks any emotional resonance or depth."
+        }
+    ],
+    "sexism_presence_1_5_examples": [
+        {
+            "example_text_input": "While some women are good at technical roles, it's generally not their primary aptitude.",
+            "example_criterion": "Degree of Sexist Content",
+            "example_llm_output": "<score>4</score>", # Assuming 5 is 'Clear and strong sexist content'
+            "example_rationale_for_prompt": "Contains a gender-based generalization that implies inherent lesser aptitude, which is moderately sexist."
+        },
+        {
+            "example_text_input": "Our company is committed to equal opportunities for all genders in leadership positions.",
+            "example_criterion": "Degree of Sexist Content",
+            "example_llm_output": "<score>1</score>", # Assuming 1 is 'No discernible sexist content'
+            "example_rationale_for_prompt": "States a commitment to equality, no sexist content."
+        }
+    ]
+    # Add more example sets as needed for other variants
+}
+
+# --- Data for Classification Experiments ---
+
+CLASSIFICATION_CATEGORIES = {
+    "user_feedback_v1": [
+        {"id": "bug", "name": "Bug Report", "description": "The user is describing something that is broken or not working as intended."},
+        {"id": "feature_request", "name": "Feature Request", "description": "The user is suggesting a new capability or an enhancement to an existing one."},
+        {"id": "general_comment", "name": "General Comment", "description": "The user is providing a general opinion or statement not fitting other categories."},
+        {"id": "question", "name": "Question", "description": "The user is asking for information or clarification."}
+    ],
+    "sentiment_basic_v1": [
+        {"id": "positive", "name": "Positive", "description": "The text expresses a predominantly positive sentiment."},
+        {"id": "negative", "name": "Negative", "description": "The text expresses a predominantly negative sentiment."},
+        {"id": "neutral_mixed", "name": "Neutral/Mixed", "description": "The text is neutral, expresses mixed sentiments, or sentiment is ambiguous."},
+    ],
+    # Example of a category set for definition nuance testing (can be referenced by a strategy)
+    "user_feedback_v1_defs_nuance_A": [
+        {"id": "bug", "name": "Bug Report", "description": "Describes an existing, documented feature that is not functioning correctly and is actively causing a problem."},
+        {"id": "feature_request", "name": "Feature Request", "description": "Suggests a new capability, an improvement to an existing one, or exceeding current documented limits which is desired by the user."},
+        {"id": "general_comment", "name": "General Comment", "description": "User is providing a general opinion or statement not fitting other categories."},
+        {"id": "question", "name": "Question", "description": "The user is asking for information or clarification about current functionalities."}
+    ]
+}
+
+CLASSIFICATION_ITEMS = [
+    {
+        "item_id": "uf_001_ambiguous_bug_feature",
+        "text": "The app crashes when I try to upload a video larger than 500MB. It should support 1GB.",
+        "domain": "user_feedback_v1",
+        "expected_true_categories": ["bug", "feature_request"], 
+        "ambiguity_score": 0.8, 
+        "is_control_item": False 
+    },
+    {
+        "item_id": "uf_002_clear_bug",
+        "text": "Every time I click the save button, the application closes unexpectedly and I lose my work.",
+        "domain": "user_feedback_v1",
+        "expected_true_categories": ["bug"],
+        "ambiguity_score": 0.1,
+        "is_control_item": True
+    },
+    {
+        "item_id": "uf_003_clear_feature_request",
+        "text": "It would be amazing if we could export these reports to PDF format.",
+        "domain": "user_feedback_v1",
+        "expected_true_categories": ["feature_request"],
+        "ambiguity_score": 0.1,
+        "is_control_item": True
+    },
+    {
+        "item_id": "uf_004_question",
+        "text": "How do I change my password in the settings?",
+        "domain": "user_feedback_v1",
+        "expected_true_categories": ["question"],
+        "ambiguity_score": 0.0,
+        "is_control_item": True
+    },
+    {
+        "item_id": "uf_005_ambiguous_comment_feature",
+        "text": "The new interface is certainly very blue. Maybe some options for themes?",
+        "domain": "user_feedback_v1",
+        "expected_true_categories": ["general_comment", "feature_request"],
+        "ambiguity_score": 0.7,
+        "is_control_item": False
+    },
+    {
+        "item_id": "senti_001_clear_positive",
+        "text": "I absolutely love this product, it's changed my workflow for the better!",
+        "domain": "sentiment_basic_v1",
+        "expected_true_categories": ["positive"],
+        "ambiguity_score": 0.0,
+        "is_control_item": True
+    },
+    {
+        "item_id": "senti_002_clear_negative",
+        "text": "This is the worst service I have ever received. Completely unacceptable.",
+        "domain": "sentiment_basic_v1",
+        "expected_true_categories": ["negative"],
+        "ambiguity_score": 0.0,
+        "is_control_item": True
+    },
+    {
+        "item_id": "senti_003_ambiguous_mixed",
+        "text": "The food was delicious, but the waiter was quite rude and slow.",
+        "domain": "sentiment_basic_v1",
+        "expected_true_categories": ["neutral_mixed"], # Or could be split if model supports multi-label in output
+        "ambiguity_score": 0.6,
+        "is_control_item": False
+    },
+    {
+        "item_id": "senti_004_subtle_negative",
+        "text": "Well, that's certainly one way to design a website, I suppose.",
+        "domain": "sentiment_basic_v1",
+        "expected_true_categories": ["negative", "neutral_mixed"],
+        "ambiguity_score": 0.7,
+        "is_control_item": False
+    }
+]
+
+PROMPT_VARIANT_STRATEGIES = [
+    # --- Strategies for User Feedback (user_feedback_v1) ---
+    {
+        "strategy_id": "UF_Order_BFGQ_DefsOn_StdTemplate",
+        "description": "User Feedback: Order Bug, Feature, General, Question; Definitions ON.",
+        "domain_target": "user_feedback_v1", 
+        "experimental_focus": "Baseline with standard definitions and typical order.",
+        "base_prompt_template": "Please classify the following user feedback into one of the categories listed below. Provide only the category name as your answer.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSelected Category:",
+        "category_order": ["bug", "feature_request", "general_comment", "question"],
+        "include_definitions": True,
+    },
+    {
+        "strategy_id": "UF_Order_QGFB_DefsOff_AltTemplate",
+        "description": "User Feedback: Order Question, General, Feature, Bug; Definitions OFF. Alt template.",
+        "domain_target": "user_feedback_v1",
+        "experimental_focus": "Test sensitivity to category presentation order (Hypothesis 2.A) and absence of definitions.",
+        "base_prompt_template": "Categories: {category_list_comma_separated}. Text: ```{item_text}```. Your Choice (Name Only):",
+        "category_order": ["question", "general_comment", "feature_request", "bug"],
+        "include_definitions": False,
+    },
+    {
+        "strategy_id": "UF_Order_BF_WithEscape_DefsOn_DetailListTemplate",
+        "description": "User Feedback: Order Bug, Feature with 'Other' escape; Definitions ON. Detailed List Template.",
+        "domain_target": "user_feedback_v1",
+        "experimental_focus": "Test impact of an escape hatch category when primary categories are limited (Hypothesis 2.C).",
+        "base_prompt_template": "Review the text and select the best category from the list. Provide only the category name.\n\nCategories:\n{category_section_detailed_list}\nText: ```{item_text}```\n\nSelected Category:",
+        "category_order": ["bug", "feature_request"], 
+        "include_definitions": True,
+        "escape_hatch_config": {"id": "uf_other_escape", "name": "Other/Cannot Classify", "description": "Use if the feedback doesn't clearly fit Bug Report or Feature Request, or is unclear."}
+    },
+    {
+        "strategy_id": "UF_Order_BFGQ_NuancedDefs_StdTemplate",
+        "description": "User Feedback: Order Bug, Feature, General, Question; Nuanced Definitions ON.",
+        "domain_target": "user_feedback_v1", 
+        "experimental_focus": "Test sensitivity to nuanced category definitions (Hypothesis 2.B).",
+        "base_prompt_template": "Please classify the following user feedback into one of the categories listed below using the provided definitions. Provide only the category name as your answer.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSelected Category:",
+        "category_order": ["bug", "feature_request", "general_comment", "question"],
+        "include_definitions": True,
+        "definition_nuance_domain_id": "user_feedback_v1_defs_nuance_A"
+    },
+    {
+        "strategy_id": "UF_Order_BFGQ_DefsOff_NoNuance",
+        "description": "User Feedback: Order B,F,G,Q; Definitions OFF. Standard Template.",
+        "domain_target": "user_feedback_v1", 
+        "experimental_focus": "Test impact of no definitions with a standard category order (Control for 2.A/2.B).",
+        "base_prompt_template": "Please classify the following user feedback into one of these categories: {category_list_comma_separated}. Provide only the category name.\n\nText: ```{item_text}```\n\nSelected Category:",
+        "category_order": ["bug", "feature_request", "general_comment", "question"],
+        "include_definitions": False, # Key change
+    },
+
+    # --- Strategies for Basic Sentiment (sentiment_basic_v1) ---
+    {
+        "strategy_id": "SB_Order_PNM_DefsOn_StdTemplate",
+        "description": "Sentiment Basic: Order Positive, Negative, Mixed; Definitions ON.",
+        "domain_target": "sentiment_basic_v1",
+        "experimental_focus": "Baseline sentiment classification with definitions.",
+        "base_prompt_template": "Assess the sentiment of the following text using one of the categories. Respond with the category name only.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSentiment Category:",
+        "category_order": ["positive", "negative", "neutral_mixed"],
+        "include_definitions": True,
+    },
+    {
+        "strategy_id": "SB_Order_MNP_DefsOff_AltTemplate",
+        "description": "Sentiment Basic: Order Mixed, Negative, Positive; Definitions OFF. Alt template.",
+        "domain_target": "sentiment_basic_v1",
+        "experimental_focus": "Test sentiment classification with reversed order and no definitions (Hypothesis 2.A).",
+        "base_prompt_template": "Choose one: {category_list_comma_separated}. Text: ```{item_text}```. Your Sentiment Choice:",
+        "category_order": ["neutral_mixed", "negative", "positive"],
+        "include_definitions": False,
+    },
+    {
+        "strategy_id": "SB_Order_PN_WithEscape_DefsOn_DetailListTemplate",
+        "description": "Sentiment Basic: Order Positive, Negative with 'Indecisive' escape; Defs ON. Detail List Template.",
+        "domain_target": "sentiment_basic_v1", 
+        "experimental_focus": "Test sentiment with limited primary categories and an escape hatch (Hypothesis 2.C).",
+        "base_prompt_template": "From the categories below, pick one that best describes the text's sentiment. Only state the category name.\n\nCategories Available:\n{category_section_detailed_list}\nText Sample: ```{item_text}```\n\nCategory Name:",
+        "category_order": ["positive", "negative"], 
+        "include_definitions": True,
+        "escape_hatch_config": {"id": "sb_indecisive_escape", "name": "Indecisive/Unclear Sentiment", "description": "Select if the sentiment is truly unclear or cannot be decided between Positive or Negative."}
+    }
+]
+
+FEW_SHOT_EXAMPLE_SETS_SCORING = {
+    "poem_emotional_impact_1_5_examples": [
+        {
+            "example_text_input": "The gentle rain whispers secrets to the sleeping fields, each droplet a soft sigh of the passing night.",
+            "example_criterion": "emotional impact and depth of meaning",
+            "example_llm_output": "<score>4</score>",
+            "example_rationale_for_prompt": "Evokes a calm, contemplative mood with decent imagery, suggesting deeper meaning."
+        },
+        {
+            "example_text_input": "The cat sat. The mat was flat. It was a rat.",
+            "example_criterion": "emotional impact and depth of meaning",
+            "example_llm_output": "<score>1</score>",
+            "example_rationale_for_prompt": "Very simplistic, factual, lacks any emotional resonance or depth."
+        }
+    ],
+    "sexism_presence_1_5_examples": [
+        {
+            "example_text_input": "While some women are good at technical roles, it's generally not their primary aptitude.",
+            "example_criterion": "Degree of Sexist Content",
+            "example_llm_output": "<score>4</score>", # Assuming 5 is 'Clear and strong sexist content'
+            "example_rationale_for_prompt": "Contains a gender-based generalization that implies inherent lesser aptitude, which is moderately sexist."
+        },
+        {
+            "example_text_input": "Our company is committed to equal opportunities for all genders in leadership positions.",
+            "example_criterion": "Degree of Sexist Content",
+            "example_llm_output": "<score>1</score>", # Assuming 1 is 'No discernible sexist content'
+            "example_rationale_for_prompt": "States a commitment to equality, no sexist content."
+        }
+    ]
+    # Add more example sets as needed for other variants
+}

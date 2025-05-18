@@ -22,8 +22,8 @@ CONCURRENT_API_CALLS_MULTI_CRITERIA = 8 # Can be adjusted
 def format_rubric_for_prompt(rubric_dict: dict) -> str:
     """Formats the structured rubric dictionary into a string for the LLM prompt."""
     lines = []
-    lines.append(f"**{rubric_dict.get('rubric_name', 'Evaluation Rubric')}**") # Use .get for safety
-    lines.append(f"\n**Scoring Scale:** {rubric_dict.get('scoring_scale_description', '1-5 Scale')}\n") # Use .get for safety
+    lines.append(f"**{rubric_dict.get('rubric_name', 'Evaluation Rubric')}**")
+    lines.append(f"\n**Scoring Scale:** {rubric_dict.get('scoring_scale_description', '1-5 Scale')}\n")
     lines.append("**Criteria Details:**")
     
     criteria_items = rubric_dict.get('criteria', {})
@@ -38,7 +38,7 @@ def format_rubric_for_prompt(rubric_dict: dict) -> str:
             if not scoring_levels:
                 lines.append("    (No scoring levels defined)")
             else:
-                for score, level_desc in sorted(scoring_levels.items(), reverse=True): # Show 5 down to 1
+                for score, level_desc in sorted(scoring_levels.items(), reverse=True):
                     lines.append(f"  {score}: {level_desc}")
             
     return "\n".join(lines)
@@ -91,28 +91,28 @@ def parse_multi_criteria_json(response_text: str, criteria_order: list) -> dict 
         
     return scores
 
-def _run_single_item_evaluation_task( # RENAMED: argument -> item (more generic)
+def _run_single_item_evaluation_task(
     variant_config: dict, 
-    item_to_evaluate: dict, # RENAMED: argument_item -> item_to_evaluate
+    item_to_evaluate: dict,
     full_rubric_text: str,
     criteria_order: list, 
     repetitions: int, 
-    quiet: bool
+    quiet: bool,
+    temperature: float
 ) -> dict:
     """
     Runs LLM evaluation for a single item against a specific prompt variant, expecting multi-criteria JSON output.
     Handles repetitions.
     """
-    item_id = item_to_evaluate['id'] # RENAMED
-    item_text_to_score = item_to_evaluate['text'] # RENAMED
-    item_title = item_to_evaluate.get('title', item_id) # RENAMED
+    item_id = item_to_evaluate['id']
+    item_text_to_score = item_to_evaluate['text']
+    item_title = item_to_evaluate.get('title', item_id)
 
     system_prompt = variant_config.get("system_prompt")
     user_prompt_template = variant_config["user_prompt_template"]
 
-    # Use 'text' for the placeholder, assuming prompts are consistent
     user_prompt = user_prompt_template.format(
-        text=item_text_to_score, # Use a generic 'text' placeholder
+        text=item_text_to_score,
         rubric_text=full_rubric_text,
         criteria_names_json_string=json.dumps(criteria_order)
     )
@@ -124,13 +124,13 @@ def _run_single_item_evaluation_task( # RENAMED: argument -> item (more generic)
     errors_in_repetitions_count = 0
 
     if repetitions > 1 and not quiet:
-        print(f"    Evaluating Item: '{item_title}' with Variant: '{variant_config['name']}' ({repetitions} reps)...") # RENAMED
+        print(f"    Evaluating Item: '{item_title}' with Variant: '{variant_config['name']}' ({repetitions} reps)...")
 
     for rep_idx in range(repetitions):
         if repetitions > 1 and not quiet:
             print(f"      Rep {rep_idx + 1}/{repetitions}...")
         
-        llm_response_raw = call_openrouter_api(prompt_to_send, quiet=True) 
+        llm_response_raw = call_openrouter_api(prompt_to_send, quiet=True, temperature=temperature)
         llm_raw_responses_list.append(llm_response_raw)
 
         parsed_scores_single_rep = None
@@ -147,7 +147,7 @@ def _run_single_item_evaluation_task( # RENAMED: argument -> item (more generic)
                 error_type = "API Error" if is_api_error else "Parsing Error"
                 print(f"        {error_type} in Rep {rep_idx + 1}. LLM Raw: {llm_response_raw[:150]}...")
                 
-    return { # RENAMED fields
+    return {
         "item_id": item_id,
         "item_title": item_title,
         "variant_name": variant_config["name"],
@@ -159,22 +159,24 @@ def _run_single_item_evaluation_task( # RENAMED: argument -> item (more generic)
 
 # --- Main Experiment Function ---
 
-def run_multi_criteria_experiment( # RENAMED and PARAMETERIZED
-    data_list: list, # PARAMETER: List of items to score (e.g., arguments, stories)
-    rubric_dict: dict, # PARAMETER: The rubric dictionary for this task
-    task_name: str,    # PARAMETER: Name for logging/variant naming (e.g., "Argument", "StoryOpening")
+def run_multi_criteria_experiment(
+    data_list: list,
+    rubric_dict: dict,
+    task_name: str,
     show_raw: bool = False, 
     quiet: bool = False, 
     num_samples: int = 0, 
-    repetitions: int = 1
+    repetitions: int = 1,
+    temperature: float = 0.1
 ) -> list:
     """
     Main experiment runner for scoring items against multiple criteria based on provided data and rubric.
     """
     if not quiet:
-        print(f"\n--- Multi-Criteria Scoring Experiment ({task_name}) ---") # Use task_name
+        print(f"\n--- Multi-Criteria Scoring Experiment ({task_name}) ---")
         print(f"LLM Model: {BIAS_SUITE_LLM_MODEL}")
         print(f"Repetitions per item-variant: {repetitions}")
+        print(f"Temperature for API calls: {temperature}")
 
     if not data_list or not isinstance(data_list, list):
         print(f"Warning: Provided data_list for task '{task_name}' is empty or invalid. Skipping experiment.")
@@ -183,7 +185,7 @@ def run_multi_criteria_experiment( # RENAMED and PARAMETERIZED
         print(f"Warning: Provided rubric_dict for task '{task_name}' is empty or invalid. Skipping experiment.")
         return []
         
-    items_to_process = data_list # Use passed-in data
+    items_to_process = data_list
     if num_samples > 0 and len(items_to_process) > num_samples:
         items_to_process = items_to_process[:num_samples]
     
@@ -191,7 +193,6 @@ def run_multi_criteria_experiment( # RENAMED and PARAMETERIZED
         print(f"No items to process for task '{task_name}' after sampling. Skipping experiment.")
         return []
 
-    # Derive criteria order from the passed-in rubric
     criteria_order = rubric_dict.get("criteria_order", list(rubric_dict.get("criteria", {}).keys()))
     if not criteria_order:
         print(f"Warning: Could not determine criteria order for task '{task_name}'. Skipping experiment.")
@@ -200,18 +201,12 @@ def run_multi_criteria_experiment( # RENAMED and PARAMETERIZED
     if not quiet:
         print(f"Processing {len(items_to_process)} item(s) using '{task_name}' rubric.")
 
-    # Format the full rubric text using the helper
     formatted_rubric_text = format_rubric_for_prompt(rubric_dict)
 
-    # Define prompt variants - potentially make these adaptable based on task_name if needed
-    # For now, using a generic template assuming 'text' key in data_list items
-    # and criteria names passed separately. System prompt might need adjustment per task.
     prompt_variants = [
         {
             "name": f"{task_name}_StandardJSON_V1",
-            # Generic system prompt - might be better to pass this in too if tasks differ significantly
             "system_prompt": f"You are an evaluation assistant. Your task is to objectively evaluate the provided text based on the criteria: {', '.join(criteria_order)}, using the detailed scoring rubric. Respond ONLY with a single JSON object containing your scores.",
-            # Generic user prompt template
             "user_prompt_template": f"Please evaluate the following text based on the rubric provided below. Assign a score from 1 to 5 for each of the criteria: {', '.join(criteria_order)}.\n\nYour response MUST be a single JSON object. The keys of the JSON object must be exactly these strings: {{criteria_names_json_string}}. The value for each key should be the integer score (1-5).\n\n**TEXT:**\n```\n{{text}}\n```\n\n**SCORING RUBRIC:**\n```\n{{rubric_text}}\n```\n\n**Your JSON Response:"
         }
     ]
@@ -232,13 +227,14 @@ def run_multi_criteria_experiment( # RENAMED and PARAMETERIZED
                     print(f"  Queueing Item: '{item_title_display}', Variant: '{variant_config['name']}'")
 
                 future = executor.submit(
-                    _run_single_item_evaluation_task, # Use renamed helper
+                    _run_single_item_evaluation_task,
                     variant_config,
-                    item_data, # Pass the specific item
-                    formatted_rubric_text, # Pass the formatted rubric
-                    criteria_order, # Pass the derived criteria order
+                    item_data,
+                    formatted_rubric_text,
+                    criteria_order,
                     repetitions,
-                    quiet
+                    quiet,
+                    temperature
                 )
                 future_to_task_info[future] = (item_data['id'], variant_config['name'])
 
@@ -257,7 +253,7 @@ def run_multi_criteria_experiment( # RENAMED and PARAMETERIZED
                         error_item_title = item.get('title', item_id)
                         break
 
-                all_results_data.append({ # RENAMED
+                all_results_data.append({
                     "item_id": item_id, "variant_name": variant_name, "error_message": str(exc),
                     "scores_per_repetition": [], "llm_raw_responses": [], 
                     "errors_in_repetitions": repetitions, "total_repetitions_attempted": repetitions,
@@ -283,14 +279,14 @@ def run_multi_criteria_experiment( # RENAMED and PARAMETERIZED
     final_summary_for_return = []
 
     for result_item in all_results_data:
-        item_title_str = str(result_item.get("item_title", "N/A")) # RENAMED
+        item_title_str = str(result_item.get("item_title", "N/A"))
         title_display = item_title_str[:col_widths[1]-3] + "..." if len(item_title_str) > col_widths[1] else item_title_str
         variant_name_str = str(result_item.get("variant_name", "N/A"))
         
         if "error_message" in result_item:
             error_msg_display = str(result_item['error_message'])[:50] + "..." if len(str(result_item['error_message'])) > 53 else str(result_item['error_message'])
             error_row = [
-                str(result_item.get("item_id", "N/A")).ljust(col_widths[0]), # RENAMED
+                str(result_item.get("item_id", "N/A")).ljust(col_widths[0]),
                 title_display.ljust(col_widths[1]),
                 variant_name_str.ljust(col_widths[2]),
                 '0'.ljust(col_widths[3]),
@@ -305,14 +301,14 @@ def run_multi_criteria_experiment( # RENAMED and PARAMETERIZED
         num_successful_reps = len(successful_reps_data)
 
         row_values = [
-            str(result_item["item_id"]).ljust(col_widths[0]), # RENAMED
+            str(result_item["item_id"]).ljust(col_widths[0]),
             title_display.ljust(col_widths[1]),
             variant_name_str.ljust(col_widths[2]),
             str(num_successful_reps).ljust(col_widths[3]),
             str(result_item.get("errors_in_repetitions", "0")).ljust(col_widths[4])
         ]
         
-        processed_item_summary = { # RENAMED
+        processed_item_summary = {
             "item_id": result_item["item_id"],
             "item_title": item_title_str,
             "variant_name": variant_name_str,
@@ -342,17 +338,17 @@ def run_multi_criteria_experiment( # RENAMED and PARAMETERIZED
         final_summary_for_return.append(processed_item_summary)
 
     if show_raw and not quiet:
-        print(f"\n\n--- Raw LLM Responses for {task_name} Scoring (Sample) ---") # Use task_name
+        print(f"\n\n--- Raw LLM Responses for {task_name} Scoring (Sample) ---")
         for i, result_item in enumerate(all_results_data):
             if i >= 3 and num_samples > 0 : break 
             if "error_message" in result_item: continue
             if not result_item.get("llm_raw_responses"): continue 
             
-            print(f"\nItem: {result_item.get('item_title', 'N/A')}, Variant: {result_item.get('variant_name','N/A')}") # RENAMED
+            print(f"\nItem: {result_item.get('item_title', 'N/A')}, Variant: {result_item.get('variant_name','N/A')}")
             for rep_idx, raw_resp in enumerate(result_item.get("llm_raw_responses", [])):
                 print(f"  Rep {rep_idx+1} Raw: {str(raw_resp)[:250]}{'...' if len(str(raw_resp)) > 250 else ''}")
                 successful_scores_for_rep = result_item.get("scores_per_repetition", [])
-                if rep_idx < len(successful_scores_for_rep):
+                if rep_idx < len(successful_scores_for_rep):\
                     print(f"    Parsed: {successful_scores_for_rep[rep_idx]}")
                 else:
                     print("    Parsed: Error or No Valid JSON")
@@ -360,7 +356,6 @@ def run_multi_criteria_experiment( # RENAMED and PARAMETERIZED
     return final_summary_for_return
 
 if __name__ == '__main__':
-    # Basic setup for direct execution - requires manual setup of data/rubric
     _current_dir = os.path.dirname(os.path.abspath(__file__))
     _parent_dir = os.path.dirname(_current_dir)
     _grandparent_dir = os.path.dirname(_parent_dir)
@@ -368,11 +363,10 @@ if __name__ == '__main__':
     if _parent_dir not in sys.path: sys.path.insert(0, _parent_dir)
         
     from dotenv import load_dotenv
-    dotenv_path = os.path.join(_grandparent_dir, '.env') # Assume .env is in grandparent dir
+    dotenv_path = os.path.join(_grandparent_dir, '.env')
     if os.path.exists(dotenv_path): load_dotenv(dotenv_path); print(f"Loaded .env from: {dotenv_path} (direct run)")
     else: print(f".env not found at: {dotenv_path} (direct run)")
 
-    # Need to import test_data to run this directly now
     try:
         from test_data import SHORT_ARGUMENTS_FOR_SCORING, ARGUMENT_EVALUATION_RUBRIC
         test_data_available = True
@@ -398,7 +392,8 @@ if __name__ == '__main__':
             num_samples=1, 
             repetitions=1, 
             quiet=False, 
-            show_raw=True
+            show_raw=True,
+            temperature=0.6
         ) 
         print("\n\n--- Experiment Finished (Direct Run). Returned Data Structure (Sample) ---")
         if results:

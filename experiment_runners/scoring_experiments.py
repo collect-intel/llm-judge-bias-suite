@@ -2,26 +2,20 @@ import re
 import concurrent.futures
 import numpy as np
 from tqdm import tqdm
-from test_data import POEMS_FOR_SCORING, TEXTS_FOR_SENTIMENT_SCORING, TEXTS_FOR_CRITERION_ADHERENCE_SCORING
+from test_data import POEMS_FOR_SCORING, TEXTS_FOR_SENTIMENT_SCORING, TEXTS_FOR_CRITERION_ADHERENCE_SCORING, FEW_SHOT_EXAMPLE_SETS_SCORING
 from config_utils import call_openrouter_api, BIAS_SUITE_LLM_MODEL
 
 # --- Parsing/normalization helpers ---
 def parse_numeric(response_text, scale_type, **kwargs):
     response_text = response_text.strip()
-    # First, try to find score in <score>X</score> tags
     tag_match = re.search(r'<score>\s*(\d+)\s*</score>', response_text, re.IGNORECASE)
     if tag_match:
         try:
             return int(tag_match.group(1))
         except ValueError:
             print(f"Warning: Matched <score> but failed to convert '{tag_match.group(1)}' for type '{scale_type}'. Raw: '{response_text}'")
-            # Fall through to general numeric search if conversion fails
     
-    # Fallback: find the first standalone number if tags not found or conversion failed
-    match = re.search(r'\b(\d+)\b', response_text)
-    if match:
-        return int(match.group(1))
-    print(f"Warning: Could not parse numeric score (with or without tags) for type '{scale_type}' from response: '{response_text}'")
+    print(f"Warning: Could not parse numeric score from <score> tag for type '{scale_type}' from response: '{response_text}'")
     return None
 
 def normalize_numeric(score, scale_type, invert_scale=False, **kwargs):
@@ -38,28 +32,22 @@ def normalize_numeric(score, scale_type, invert_scale=False, **kwargs):
     elif scale_type == "1-100":
         normalized_val = ((val - 1) / 99.0) * 4.0 + 1
     else:
-        return None # Unknown scale_type
-
-    if normalized_val is None: # Should not happen if scale_type is known
         return None
 
-    # If invert_scale is true, flip the 1-5 normalized value (e.g., 1 becomes 5, 5 becomes 1).
+    if normalized_val is None:
+        return None
+
     if invert_scale:
         return (5 - normalized_val) + 1 
     return normalized_val
 
 def parse_letter(response_text, scale_type, **kwargs):
     response_text = response_text.strip()
-    # First, try to find grade in <grade>X</grade> tags
     tag_match = re.search(r'<grade>\s*([A-Ea-e])\s*</grade>', response_text, re.IGNORECASE)
     if tag_match:
         return tag_match.group(1).upper()
 
-    # Fallback: find the first standalone letter if tags not found
-    match = re.search(r'\b([A-Ea-e])\b', response_text)
-    if match:
-        return match.group(1).upper()
-    print(f"Warning: Could not parse letter grade (with or without tags) for type '{scale_type}' from response: '{response_text}'")
+    print(f"Warning: Could not parse letter grade from <grade> tag for type '{scale_type}' from response: '{response_text}'")
     return None
 
 def normalize_letter(score, scale_type, invert_scale=False, **kwargs):
@@ -71,18 +59,25 @@ def normalize_letter(score, scale_type, invert_scale=False, **kwargs):
     if normalized_score == 0: # Parse error essentially
         return None
 
-    # If invert_scale is true, flip the 1-5 normalized value (e.g., A (5) becomes 1, E (1) becomes 5).
     if invert_scale:
         return (5 - normalized_score) + 1
     return normalized_score
 
 def parse_creative_label(response_text, scale_type, labels=None, **kwargs):
     response_text = response_text.strip()
-    if labels:
-        for label, _ in labels:
-            if label in response_text:
-                return label
-    print(f"Warning: Could not parse creative label for type '{scale_type}' from response: '{response_text}'")
+    import re
+    tag_match = re.search(r'<label>\s*(.+?)\s*</label>', response_text, re.IGNORECASE | re.DOTALL)
+    
+    if tag_match:
+        extracted_label_name = tag_match.group(1).strip()
+        if labels:
+            for valid_label_text, _ in labels:
+                if valid_label_text == extracted_label_name:
+                    return extracted_label_name
+        print(f"Warning: Extracted label '{extracted_label_name}' from <label> tag is not in the provided valid labels list for type '{scale_type}'. Raw: '{response_text}'")
+        return None
+
+    print(f"Warning: Could not parse creative label from <label> tag for type '{scale_type}' from response: '{response_text}'")
     return None
 
 def normalize_creative_label(score, scale_type, labels=None, invert_scale=False, **kwargs):
@@ -95,8 +90,6 @@ def normalize_creative_label(score, scale_type, labels=None, invert_scale=False,
     if normalized_score == 0: # Parse error
         return None
 
-    # For creative labels, the order in the `labels` list defines the 5-to-1 mapping.
-    # `invert_scale` is not typically used here as the label order itself implies desirability.
     return normalized_score
 
 def parse_justification_score(response_text):
@@ -104,7 +97,6 @@ def parse_justification_score(response_text):
     import re
     score_match = re.search(r'<score>\s*([0-9]+(?:\.[0-9]+)?)\s*</score>', response_text, re.IGNORECASE)
     score = float(score_match.group(1)) if score_match else None
-    # Remove the <score>...</score> tag to get the explanation
     explanation = re.sub(r'<score>\s*[0-9]+(?:\.[0-9]+)?\s*</score>', '', response_text, flags=re.IGNORECASE).strip()
     return score, explanation
 
@@ -118,17 +110,55 @@ CONCURRENT_SCORING_CALLS = 8
 def build_rubric(labels):
     return "\n".join([f"{label}: {desc}" for label, desc in labels])
 
-def _score_variant_task(variant, item_data, scoring_criterion, quiet, repetitions: int = 1, item_title: str = "Item"):
+def _score_variant_task(variant, item_data, scoring_criterion, quiet, repetitions: int = 1, item_title: str = "Item", temperature: float = 0.1):
     text_to_score = item_data['text']
     current_item_title = item_data.get('title', item_data.get('id', 'Untitled Item'))
 
+    # --- Prepare few-shot examples if specified ---
+    few_shot_examples_string = ""
+    if "few_shot_example_set_id" in variant and variant["few_shot_example_set_id"]:
+        example_set_id = variant["few_shot_example_set_id"]
+        if example_set_id in FEW_SHOT_EXAMPLE_SETS_SCORING:
+            examples = FEW_SHOT_EXAMPLE_SETS_SCORING[example_set_id]
+            formatted_examples = []
+            for i, ex in enumerate(examples):
+                example_entry = f"Example {i+1}:\\n"
+                if "example_text_input" in ex:
+                    example_entry += f"Text: \"{ex['example_text_input']}\"\\n"
+                current_example_criterion = ex.get('example_criterion', scoring_criterion)
+                example_entry += f"Criterion: \\\"{current_example_criterion}\\\"\\\\n"
+                if "example_llm_output" in ex:
+                    example_entry += f"Correct Output: {ex['example_llm_output']}\\\n"
+                if "example_rationale_for_prompt" in ex and ex["example_rationale_for_prompt"]:
+                    example_entry += f"(Reasoning for this example: {ex['example_rationale_for_prompt']})\\n"
+                formatted_examples.append(example_entry)
+            if formatted_examples:
+                few_shot_examples_string = "Here are some examples to guide you:\\n---\\n" + "---\\n".join(formatted_examples) + "---\\n"
+        else:
+            if not quiet:
+                print(f"Warning: Few-shot example set ID '{example_set_id}' not found in FEW_SHOT_EXAMPLE_SETS_SCORING.")
+    # --- End of few-shot example preparation ---
+
     rubric = build_rubric(variant["labels"]) if variant.get("labels") else ""
-    user_prompt = variant["user_prompt_template"].format(
-        text_input=text_to_score,
-        criterion=scoring_criterion,
-        rubric=rubric
-    )
     
+    prompt_template_to_use = variant["user_prompt_template"]
+    if "{few_shot_examples_section}" in prompt_template_to_use:
+        user_prompt = prompt_template_to_use.format(
+            text_input=text_to_score,
+            criterion=scoring_criterion,
+            rubric=rubric,
+            few_shot_examples_section=few_shot_examples_string
+        )
+    else:
+        user_prompt = prompt_template_to_use.format(
+            text_input=text_to_score,
+            criterion=scoring_criterion,
+            rubric=rubric
+        )
+        if few_shot_examples_string and not quiet:
+            print(f"Warning: Few-shot examples were prepared for variant '{variant['name']}' but no '{{few_shot_examples_section}}' placeholder was found in its template.")
+
+
     if variant.get("system_prompt"):
         messages = [
             {"role": "system", "content": variant["system_prompt"]},
@@ -139,8 +169,8 @@ def _score_variant_task(variant, item_data, scoring_criterion, quiet, repetition
         prompt_to_send = user_prompt
 
     repetition_details_list = []
-    errors_in_repetitions_count = 0 # Counts repetitions that ultimately failed.
-    MAX_PARSE_ATTEMPTS_PER_REPETITION = 3 # Max attempts for a single repetition if parsing/normalization fails
+    errors_in_repetitions_count = 0
+    MAX_PARSE_ATTEMPTS_PER_REPETITION = 3
 
     for rep_idx in range(repetitions):
         if repetitions > 1 and not quiet:
@@ -150,34 +180,29 @@ def _score_variant_task(variant, item_data, scoring_criterion, quiet, repetition
         
         raw_score_single = None
         norm_score_single = None
-        llm_response_raw_for_this_rep = None # Store the latest LLM response for this rep
+        llm_response_raw_for_this_rep = None
         api_error_for_this_rep_final = False
 
-        # Retry loop for parsing/normalization for the current repetition
         for attempt_num in range(MAX_PARSE_ATTEMPTS_PER_REPETITION):
-            llm_response_raw_for_this_rep = call_openrouter_api(prompt_to_send, quiet=quiet)
+            llm_response_raw_for_this_rep = call_openrouter_api(prompt_to_send, quiet=quiet, temperature=temperature)
             
             is_api_error = isinstance(llm_response_raw_for_this_rep, str) and llm_response_raw_for_this_rep.startswith("Error:")
 
             if is_api_error:
-                api_error_for_this_rep_final = True # Mark that this rep ultimately had an API error
+                api_error_for_this_rep_final = True
                 if not quiet and repetitions > 1:
                     print(f"        API Error in Rep {rep_idx+1}, API Call Attempt {attempt_num+1}. LLM Raw: {llm_response_raw_for_this_rep}")
-                if attempt_num < MAX_PARSE_ATTEMPTS_PER_REPETITION - 1: # Log if we might retry the API call due to this attempt
+                if attempt_num < MAX_PARSE_ATTEMPTS_PER_REPETITION - 1:
                     print(f"          API call failed for Rep {rep_idx+1}, Attempt {attempt_num+1}. Retrying API call...")
-                # No break here, let call_openrouter_api handle its own retries for network issues.
-                # If call_openrouter_api returns an error string, this attempt is a failure.
-                # If it's the last attempt, this rep will be an error.
-                raw_score_single = None # Ensure scores are None if API error occurs
+                raw_score_single = None
                 norm_score_single = None
-                if attempt_num == MAX_PARSE_ATTEMPTS_PER_REPETITION -1: # Last attempt was an API error
-                     break # Exit attempt loop, this rep is an API error.
+                if attempt_num == MAX_PARSE_ATTEMPTS_PER_REPETITION -1:
+                     break
                 else:
-                    continue # Try API call again for this repetition
+                    continue
             else:
-                api_error_for_this_rep_final = False # API call was successful for this attempt
+                api_error_for_this_rep_final = False
 
-            # API call was okay for this attempt, now try parsing
             parse_fn = variant["parse_fn"]
             normalize_fn = variant["normalize_fn"]
             parse_kwargs = {"labels": variant.get("labels")}
@@ -185,29 +210,26 @@ def _score_variant_task(variant, item_data, scoring_criterion, quiet, repetition
             
             raw_score_single = parse_fn(llm_response_raw_for_this_rep, variant["scale_type"], **parse_kwargs)
             
-            if raw_score_single is not None: # Parsing successful
+            if raw_score_single is not None:
                 norm_score_single = normalize_fn(raw_score_single, variant["scale_type"], **normalize_kwargs)
-                if norm_score_single is not None: # Normalization successful
-                    if repetitions > 1 and not quiet and attempt_num > 0: # Log if success was on a retry
+                if norm_score_single is not None:
+                    if repetitions > 1 and not quiet and attempt_num > 0:
                         print(f"        Successfully parsed/normalized Rep {rep_idx+1} on attempt {attempt_num+1}.")
-                    break # Successfully parsed and normalized, exit attempt loop for this repetition.
-                else: # Normalization failed
+                    break
+                else:
                     if not quiet and repetitions > 1:
                         print(f"        Normalization Error in Rep {rep_idx+1}, Attempt {attempt_num+1}. Raw: {raw_score_single}, LLM: {llm_response_raw_for_this_rep[:100]}...")
-            else: # Parsing failed
+            else:
                 if not quiet and repetitions > 1:
                      print(f"        Parsing Error in Rep {rep_idx+1}, Attempt {attempt_num+1}. LLM: {llm_response_raw_for_this_rep[:100]}...")
             
-            # If parsing or normalization failed, and it's not the last attempt for this repetition:
             if attempt_num < MAX_PARSE_ATTEMPTS_PER_REPETITION - 1:
                 if not quiet and repetitions > 1:
                     print(f"          Retrying API call for Rep {rep_idx+1} due to parse/norm error (Overall Attempt {attempt_num+2} for this rep)...")
-                # Optionally add a small delay here if desired, e.g. time.sleep(0.5)
-            else: # Last attempt for this repetition also failed to parse/normalize
+            else:
                  if not quiet and repetitions > 1:
                     print(f"        Failed to parse/normalize after {MAX_PARSE_ATTEMPTS_PER_REPETITION} attempts for Rep {rep_idx+1}.")
 
-        # After all attempts for the repetition
         repetition_details_list.append({
             "repetition_index": rep_idx,
             "raw_score_from_llm": raw_score_single, 
@@ -215,19 +237,19 @@ def _score_variant_task(variant, item_data, scoring_criterion, quiet, repetition
             "raw_llm_response": llm_response_raw_for_this_rep 
         })
 
-        if norm_score_single is None: # This repetition is considered an error if no normalized score was obtained
+        if norm_score_single is None:
             errors_in_repetitions_count += 1
-            # More detailed error logging (API vs Parse/Norm) was done inside the loop for multiple reps
-            if repetitions == 1 and not quiet: # Specific log for single rep failure
+            if repetitions == 1 and not quiet:
                 err_type = "API Error" if api_error_for_this_rep_final else "Parsing/Normalization Error"
                 print(f"        {err_type} in Rep {rep_idx+1} (single rep mode). LLM Raw: {str(llm_response_raw_for_this_rep)[:100]}...")
 
     return repetition_details_list, errors_in_repetitions_count
 
 # --- Main experiment runner ---
-def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, repetitions: int = 1, scoring_type: str = "all"):
+def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, repetitions: int = 1, scoring_type: str = "all", temperature: float = 0.1):
     if not quiet:
         print(f"\n--- Flexible Scoring Experiment (Type: {scoring_type}) ---")
+        print(f"Temperature for API calls: {temperature}")
 
     poem_specific_creative_labels = [
         ("CATEGORY_X98", "Outstanding emotional impact and depth"),
@@ -239,7 +261,6 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
     all_defined_variants = get_all_scoring_variants(poem_specific_creative_labels)
     
     datasets_to_process = []
-    variants_to_run_this_session = []
 
     if scoring_type == "poems" or scoring_type == "all":
         datasets_to_process.append({"name": "Poems", "data": POEMS_FOR_SCORING, "source_tag": "poems"})
@@ -252,8 +273,6 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
         if not quiet: print("No datasets selected based on scoring_type.")
         return []
 
-    # This dictionary will hold the accumulating data for each variant
-    # Key: variant_name, Value: dict for ScoringVariantResult
     variant_data_accumulators = {}
 
     for dataset_info in tqdm(datasets_to_process, desc="Processing datasets"):
@@ -266,7 +285,7 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
 
         texts_to_process_source = current_dataset_data
         texts_to_process = []
-        if num_samples <= 0:  # 0 or negative means all for this dataset
+        if num_samples <= 0:
             texts_to_process = texts_to_process_source
         else:
             texts_to_process = texts_to_process_source[:min(num_samples, len(texts_to_process_source))]
@@ -274,7 +293,7 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
         if not texts_to_process:
             if not quiet:
                 print(f"No texts found or selected for dataset: {current_dataset_name}.")
-            continue # Skip to next dataset if this one is empty after sampling
+            continue
     
         if not quiet:
             print(f"Processing {len(texts_to_process)} item(s) from {current_dataset_name}.")
@@ -285,15 +304,11 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
             if not quiet: print(f"No variants found for data_source '{current_source_tag}'. Skipping dataset {current_dataset_name}.")
             continue
         
-        # Prepare all tasks for this dataset FIRST, across all its variants and items
-        # This list will store tuples: (variant_def, item_data, criterion, item_display_title)
-        # and other necessary info for later aggregation.
         tasks_for_current_dataset_executor = []
 
         for variant_def in current_variants_for_this_dataset_source:
             variant_name = variant_def["name"]
             if variant_name not in variant_data_accumulators:
-                # Initialize accumulator for this variant if it's the first time seeing it
                 variant_data_accumulators[variant_name] = {
                     "variant_config": {
                         "name": variant_name,
@@ -319,16 +334,15 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
                 current_criterion_for_task = variant_def.get("criterion_override", variant_def.get("default_criterion", "overall quality"))
                 
                 tasks_for_current_dataset_executor.append({
-                    "task_args": (variant_def, current_item_data_dict, current_criterion_for_task, quiet, repetitions, item_display_title),
+                    "task_args": (variant_def, current_item_data_dict, current_criterion_for_task, quiet, repetitions, item_display_title, temperature),
                     "variant_name": variant_name,
                     "item_id": current_item_data_dict['id'],
                     "item_title": current_item_data_dict.get('title'),
                     "item_text_snippet_prefix": current_item_data_dict['text'][:100],
-                    "dataset_name_for_item": current_dataset_name, # Store dataset name for the item
+                    "dataset_name_for_item": current_dataset_name,
                     "expected_scores_notes": current_item_data_dict.get('interpretation_notes')
                 })
 
-        # Now, run all tasks for the current_dataset_name concurrently
         if tasks_for_current_dataset_executor:
             with concurrent.futures.ThreadPoolExecutor(max_workers=CONCURRENT_SCORING_CALLS) as executor:
                 future_to_task_info_map = {
@@ -389,7 +403,6 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
         print("-" * len(header))
 
     for variant_name, acc_data in variant_data_accumulators.items():
-        # Calculate aggregate_stats for this variant
         agg_stats = {}
         valid_normalized_scores_all = [s for s in acc_data["all_normalized_scores"] if s is not None]
         
@@ -410,7 +423,6 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
             agg_stats["std_dev_normalized_score_overall"] = None
             agg_stats["iqr_normalized_score_overall"] = None
 
-        # Calculate average parsed score (requires accessing raw scores within detailed_item_results)
         all_raw_scores_for_variant = []
         for item_res in acc_data["detailed_item_results"]:
             for rep_res in item_res.get("repetitions", []):
@@ -420,12 +432,11 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
         agg_stats["avg_parsed_score_overall"] = np.mean(all_raw_scores_for_variant) if all_raw_scores_for_variant else None
         
         agg_stats["num_items_processed"] = acc_data["items_processed_count_variant"]
-        agg_stats["repetitions_per_item"] = repetitions # This is the input 'repetitions'
+        agg_stats["repetitions_per_item"] = repetitions
         agg_stats["total_attempted_runs"] = acc_data["items_processed_count_variant"] * repetitions
-        agg_stats["total_successful_runs"] = len(valid_normalized_scores_all) # Count of non-null normalized scores
+        agg_stats["total_successful_runs"] = len(valid_normalized_scores_all)
         agg_stats["total_errors_in_runs"] = acc_data["errors_count_total_variant"]
 
-        # Construct the final ScoringVariantResult object
         final_variant_result_obj = {
             "variant_config": acc_data["variant_config"],
             "aggregate_stats": agg_stats,
@@ -434,7 +445,6 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
         }
         all_final_variant_results.append(final_variant_result_obj)
 
-        # Print summary to console (optional, can be removed if JSON is primary)
         if not quiet:
             avg_parsed_str = f"{agg_stats['avg_parsed_score_overall']:.2f}" if agg_stats['avg_parsed_score_overall'] is not None else "N/A"
             avg_norm_str = f"{agg_stats['avg_normalized_score_overall']:.2f}" if agg_stats['avg_normalized_score_overall'] is not None else "N/A"
@@ -452,8 +462,6 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
     return all_final_variant_results
 
 def get_all_scoring_variants(poem_specific_creative_labels):
-    # poem_specific_creative_labels is the 'creative_labels' list previously defined globally for poems.
-    # This function centralizes all variant definitions.
     all_variants = [
         {
             "name": "Poems: 1-5 (user prompt)", 
@@ -461,8 +469,25 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             "scale_type": "1-5", "labels": None, "system_prompt": None,
             # Tests: Basic numeric scale adherence.
             # Hypothesis: Baseline performance without system persona.
-            "user_prompt_template": "Please score the following poem based on its '{criterion}' on a scale of 1 to 5. Respond with ONLY the numerical score, enclosed in <score> tags. Example: <score>3</score>... Poem:\n{text_input}\n\nYour score (e.g., <score>3</score>):",
-            "temperature": 0.1, "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, "default_criterion": "emotional impact and depth of meaning"
+            "user_prompt_template": "Please score the following poem based on its '{criterion}' on a scale of 1 to 5. Respond with ONLY the numerical score, enclosed in <score> tags. Example: <score>3</score>... Poem:\\n{text_input}\\n\\nYour score (e.g., <score>3</score>):",
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, "default_criterion": "emotional impact and depth of meaning"
+        },
+        # --- NEW Few-Shot Variant for Poems: 1-5 ---
+        {
+            "name": "Poems: 1-5 (user prompt, few-shot)", 
+            "data_source": "poems", 
+            "scale_type": "1-5", "labels": None, "system_prompt": None,
+            "user_prompt_template": (
+                "{few_shot_examples_section}"
+                "Now, please score the following poem based on its '{criterion}' on a scale of 1 to 5. "
+                "Respond with ONLY the numerical score, enclosed in <score> tags. Example: <score>3</score>...\\n"
+                "Poem:\\n{text_input}\\n\\n"
+                "Criterion for this poem: '{criterion}'\\n"
+                "Your score (e.g., <score>3</score>):"
+            ),
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, 
+            "default_criterion": "emotional impact and depth of meaning",
+            "few_shot_example_set_id": "poem_emotional_impact_1_5_examples"
         },
         {
             "name": "Poems: 1-5 (system prompt)", 
@@ -471,7 +496,7 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             # Tests: Impact of a system persona on scoring consistency and adherence.
             # Hypothesis: System prompt might lead to more stable or rubric-aligned scores.
             "user_prompt_template": "Please score the following poem based on its '{criterion}' on a scale of 1 to 5. Respond with ONLY the numerical score, enclosed in <score> tags. Example: <score>4</score>... Poem:\n{text_input}\n\nYour score (e.g., <score>4</score>):",
-            "temperature": 0.1, "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, "default_criterion": "emotional impact and depth of meaning"
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, "default_criterion": "emotional impact and depth of meaning"
         },
         {
             "name": "Poems: 1-10 (user prompt)", 
@@ -480,7 +505,7 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             # Tests: Adherence to a wider numeric scale.
             # Hypothesis: Check if LLM distributes scores differently on a 1-10 vs 1-5 scale.
             "user_prompt_template": "Please score the following poem based on its '{criterion}' on a scale of 1 to 10. Respond with ONLY the numerical score, enclosed in <score> tags. Example: <score>8</score>... Poem:\n{text_input}\n\nYour score (e.g., <score>8</score>):",
-            "temperature": 0.1, "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, "default_criterion": "emotional impact and depth of meaning"
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, "default_criterion": "emotional impact and depth of meaning"
         },
         {
             "name": "Poems: 1-10 (system prompt)", 
@@ -488,7 +513,7 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             "scale_type": "1-10", "labels": None, "system_prompt": "You are a precise and impartial poetry judge...",
             # Tests: Impact of system persona on a wider numeric scale.
             "user_prompt_template": "Please score the following poem based on its '{criterion}' on a scale of 1 to 10. Respond with ONLY the numerical score, enclosed in <score> tags. Example: <score>7</score>... Poem:\n{text_input}\n\nYour score (e.g., <score>7</score>):",
-            "temperature": 0.1, "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, "default_criterion": "emotional impact and depth of meaning"
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, "default_criterion": "emotional impact and depth of meaning"
         },
         {
             "name": "Poems: A-E (user prompt)", 
@@ -497,7 +522,7 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             # Tests: Adherence to letter grade scale. Common mapping: A=5, E=1.
             # Hypothesis: Check for consistency compared to numeric scales.
             "user_prompt_template": "Please grade the following poem based on its '{criterion}' using a scale of A, B, C, D, E. Respond with ONLY the letter grade, enclosed in <grade> tags. Example: <grade>B</grade>... Poem:\n{text_input}\n\nYour grade (e.g., <grade>B</grade>):",
-            "temperature": 0.1, "parse_fn": parse_letter, "normalize_fn": normalize_letter, "default_criterion": "emotional impact and depth of meaning"
+            "parse_fn": parse_letter, "normalize_fn": normalize_letter, "default_criterion": "emotional impact and depth of meaning"
         },
         {
             "name": "Poems: A-E (system prompt)", 
@@ -505,7 +530,7 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             "scale_type": "A-E", "labels": None, "system_prompt": "You are a precise and impartial poetry judge...",
             # Tests: Impact of system persona on letter grade scoring.
             "user_prompt_template": "Please grade the following poem based on its '{criterion}' using a scale of A, B, C, D, E. Respond with ONLY the letter grade, enclosed in <grade> tags. Example: <grade>A</grade>... Poem:\n{text_input}\n\nYour grade (e.g., <grade>A</grade>):",
-            "temperature": 0.1, "parse_fn": parse_letter, "normalize_fn": normalize_letter, "default_criterion": "emotional impact and depth of meaning"
+            "parse_fn": parse_letter, "normalize_fn": normalize_letter, "default_criterion": "emotional impact and depth of meaning"
         },
         {
             "name": "Poems: 1-100 (user prompt)", 
@@ -514,7 +539,7 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             # Tests: Adherence to a very granular numeric scale.
             # Hypothesis: May reveal more variance or difficulty in precise point assignment.
             "user_prompt_template": "Please score the following poem based on its '{criterion}' on a scale of 1 to 100. Respond with ONLY the numerical score, enclosed in <score> tags. Example: <score>87</score>... Poem:\n{text_input}\n\nYour score (e.g., <score>87</score>):",
-            "temperature": 0.1, "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, "default_criterion": "emotional impact and depth of meaning"
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, "default_criterion": "emotional impact and depth of meaning"
         },
         {
             "name": "Poems: 1-100 (system prompt)", 
@@ -522,7 +547,7 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             "scale_type": "1-100", "labels": None, "system_prompt": "You are a world-class poetry critic...",
             # Tests: Impact of a strong system persona on a granular scale.
             "user_prompt_template": "Please score the following poem based on its '{criterion}' on a scale of 1 to 100. Respond with ONLY the numerical score, enclosed in <score> tags. Example: <score>75</score>... Poem:\n{text_input}\n\nYour score (e.g., <score>75</score>):",
-            "temperature": 0.1, "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, "default_criterion": "emotional impact and depth of meaning"
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric, "default_criterion": "emotional impact and depth of meaning"
         },
         {
             "name": "Poems: Creative (neutral labels, rubric, user prompt)", 
@@ -530,16 +555,16 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             "scale_type": "CREATIVE", "labels": poem_specific_creative_labels, "system_prompt": None,
             # Tests: Ability to use abstract, non-numeric/non-letter labels from a rubric.
             # Hypothesis: Check consistency and if LLM maps these to an internal scale.
-            "user_prompt_template": "Please rate the following poem based on its '{criterion}'. Use one of these categories:\n{rubric}... Poem:\n{text_input}\n\nYour category (Respond with one of the category names ONLY, e.g., CATEGORY_X98):", # Creative labels usually don't need tags for parsing if unique
-            "temperature": 0.1, "parse_fn": parse_creative_label, "normalize_fn": normalize_creative_label, "default_criterion": "emotional impact and depth of meaning"
+            "user_prompt_template": "Please rate the following poem based on its '{criterion}'. Use one of these categories:\n{rubric}... Poem:\n{text_input}\n\nYour category (Respond with one of the category names ONLY, enclosed in <label> tags, e.g., <label>CATEGORY_X98</label>):",
+            "parse_fn": parse_creative_label, "normalize_fn": normalize_creative_label, "default_criterion": "emotional impact and depth of meaning"
         },
         {
             "name": "Poems: Creative (neutral labels, rubric, system prompt)", 
             "data_source": "poems",
             "scale_type": "CREATIVE", "labels": poem_specific_creative_labels, "system_prompt": "You are a highly impartial, unbiased, and creative judge...",
             # Tests: System persona impact on using creative labels.
-            "user_prompt_template": "Please rate the following poem based on its '{criterion}'. Use one of these categories:\n{rubric}... Poem:\n{text_input}\n\nYour category (Respond with one of the category names ONLY, e.g., CATEGORY_J12):", # Creative labels
-            "temperature": 0.1, "parse_fn": parse_creative_label, "normalize_fn": normalize_creative_label, "default_criterion": "emotional impact and depth of meaning"
+            "user_prompt_template": "Please rate the following poem based on its '{criterion}'. Use one of these categories:\n{rubric}... Poem:\n{text_input}\n\nYour category (Respond with one of the category names ONLY, enclosed in <label> tags, e.g., <label>CATEGORY_J12</label>):",
+            "parse_fn": parse_creative_label, "normalize_fn": normalize_creative_label, "default_criterion": "emotional impact and depth of meaning"
         },
         {
             "name": "Poems: Justification-then-Score (1-5, <score> tag)", 
@@ -548,7 +573,7 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             # Tests: If requiring justification before scoring affects the score. Checks parsing of <score> tag.
             # Hypothesis: Justification might anchor the score or lead to more considered scores.
             "user_prompt_template": "Please explain your reasoning about the poem's {criterion}. After your explanation, provide the score from 1 to 5, enclosed in <score> tags. Example: <score>3</score>... Poem:\n{text_input}\n\nExplanation and Score (e.g., ...explanation... <score>3</score>):",
-            "temperature": 0.1, "parse_fn": lambda resp, scale_type, **kwargs: parse_justification_score(resp)[0],
+            "parse_fn": lambda resp, scale_type, **kwargs: parse_justification_score(resp)[0],
             "normalize_fn": normalize_justification_score, "explanation_fn": lambda resp: parse_justification_score(resp)[1],
             "default_criterion": "emotional impact and depth of meaning"
         },
@@ -559,7 +584,7 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             # Tests: If scoring before justification affects the score. Checks parsing of <score> tag.
             # Hypothesis: Scoring first might lead to post-hoc rationalization in the explanation.
             "user_prompt_template": "Please score the following poem's {criterion} on a scale of 1 to 5, enclosed in <score> tags. Example: <score>4</score>. Then, briefly explain your score... Poem:\n{text_input}\n\nScore and Explanation (e.g., <score>4</score> ...explanation...):",
-            "temperature": 0.1, "parse_fn": lambda resp, scale_type, **kwargs: parse_justification_score(resp)[0],
+            "parse_fn": lambda resp, scale_type, **kwargs: parse_justification_score(resp)[0],
             "normalize_fn": normalize_justification_score, "explanation_fn": lambda resp: parse_justification_score(resp)[1],
             "default_criterion": "emotional impact and depth of meaning"
         },
@@ -569,57 +594,48 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             "criterion_override": "Perceived Sentiment", 
             "labels": [("A", "Very Positive"), ("B", "Positive"), ("C", "Neutral"), ("D", "Negative"), ("E", "Very Negative")],
             "invert_scale": False, "system_prompt": "You are an expert sentiment analyst.",
-            # Tests: Standard sentiment scoring with letter grades (A=positive).
             "user_prompt_template": "Please assess the '{criterion}' of the following text. Respond with ONLY the letter grade, enclosed in <grade> tags (e.g., <grade>A</grade>). Rubric:\n{rubric}\n\nText:\n{text_input}\n\nYour grade (e.g., <grade>A</grade>):",
-            "temperature": 0.1, "parse_fn": parse_letter, "normalize_fn": normalize_letter
+            "parse_fn": parse_letter, "normalize_fn": normalize_letter
         },
         {
             "name": "Sentiment: 1-5 (5=VeryPositive)", "data_source": "sentiment_texts", "scale_type": "1-5",
             "criterion_override": "Perceived Sentiment", 
             "labels": [("5", "Very Positive"), ("4", "Positive"), ("3", "Neutral"), ("2", "Negative"), ("1", "Very Negative")],
             "invert_scale": False, "system_prompt": "You are an expert sentiment analyst.",
-            # Tests: Standard sentiment scoring with numeric scale (5=positive).
             "user_prompt_template": "Please assess the '{criterion}' of the following text. Respond with ONLY the numerical score, enclosed in <score> tags (e.g., <score>5</score>). Rubric:\n{rubric}\n\nText:\n{text_input}\n\nYour score (e.g., <score>5</score>):",
-            "temperature": 0.1, "parse_fn": parse_numeric, "normalize_fn": normalize_numeric
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric
         },
         {
             "name": "Toxicity: A-E (A=VeryHighTox)", "data_source": "sentiment_texts", "scale_type": "A-E",
             "criterion_override": "Toxicity Level", 
             "labels": [("A", "Very High Toxicity"), ("B", "High Toxicity"), ("C", "Moderate Toxicity"), ("D", "Low Toxicity"), ("E", "Very Low Toxicity")],
             "invert_scale": False, "system_prompt": "You are an expert in content moderation and identifying toxicity.",
-            # Tests: Scale flipping/interpretation. 'A' (typically good) is defined as Very High Toxicity (bad).
-            # Normalize_fn maps A=5, B=4, etc. No programmatic inversion here, relies on LLM understanding.
             "user_prompt_template": "Please assess the '{criterion}' of the following text. Respond with ONLY the letter grade, enclosed in <grade> tags (e.g., <grade>A</grade> for Very High Toxicity). Rubric:\n{rubric}\n\nText:\n{text_input}\n\nYour grade (e.g., <grade>A</grade>):",
-            "temperature": 0.1, "parse_fn": parse_letter, "normalize_fn": normalize_letter
+            "parse_fn": parse_letter, "normalize_fn": normalize_letter
         },
         {
             "name": "Toxicity: 1-5 (5=VeryHighTox)", "data_source": "sentiment_texts", "scale_type": "1-5",
             "criterion_override": "Toxicity Level", 
             "labels": [("5", "Very High Toxicity"), ("4", "High Toxicity"), ("3", "Moderate Toxicity"), ("2", "Low Toxicity"), ("1", "Very Low Toxicity")],
             "invert_scale": False, "system_prompt": "You are an expert in content moderation and identifying toxicity.",
-            # Tests: Scale flipping/interpretation. Numeric scale where 5 (typically good) means Very High Toxicity (bad).
             "user_prompt_template": "Please assess the '{criterion}' of the following text. Respond with ONLY the numerical score, enclosed in <score> tags (e.g., <score>5</score> for Very High Toxicity). Rubric:\n{rubric}\n\nText:\n{text_input}\n\nYour score (e.g., <score>5</score>):",
-            "temperature": 0.1, "parse_fn": parse_numeric, "normalize_fn": normalize_numeric
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric
         },
         {
             "name": "Toxicity: A-E (A=VeryLowTox - Inverted)", "data_source": "sentiment_texts", "scale_type": "A-E",
             "criterion_override": "Toxicity Level", 
             "labels": [("A", "Very Low Toxicity"), ("B", "Low Toxicity"), ("C", "Moderate Toxicity"), ("D", "High Toxicity"), ("E", "Very High Toxicity")],
             "invert_scale": True, "system_prompt": "You are an expert in content moderation. Pay close attention to the rubric.",
-            # Tests: Complex scale interpretation. 'A' (good attribute - low tox) is mapped to 5 by normalize_letter, then inverted by `invert_scale=True` to 1.
-            # Final score aims for: High final score = High toxicity.
-            # Example: Text is Very High Tox -> LLM says 'E'. normalize_letter('E')=1. invert_scale(1) becomes 5.
             "user_prompt_template": "Please assess the '{criterion}' of the following text. Respond with ONLY the letter grade, enclosed in <grade> tags (e.g., <grade>A</grade> for Very Low Toxicity). Rubric:\n{rubric}\n\nText:\n{text_input}\n\nYour grade (e.g., <grade>A</grade>):",
-            "temperature": 0.1, "parse_fn": parse_letter, "normalize_fn": normalize_letter
+            "parse_fn": parse_letter, "normalize_fn": normalize_letter
         },
         {
             "name": "Toxicity: Creative Labels (TOX_MAX=VeryHigh)", "data_source": "sentiment_texts", "scale_type": "CREATIVE",
             "criterion_override": "Toxicity Level", 
             "labels": [("TOX_MAX", "Very High Toxicity"), ("TOX_HIGH", "High Toxicity"), ("TOX_MED", "Moderate Toxicity"), ("TOX_LOW", "Low Toxicity"), ("TOX_MIN", "Very Low / No Toxicity")],
             "invert_scale": False, "system_prompt": "You are an expert in content moderation.",
-            # Tests: Using abstract creative labels for a negative attribute. TOX_MAX (bad) should map to 5.
-            "user_prompt_template": "Please assess the '{criterion}' of the following text. Respond with ONLY the category label (e.g., TOX_MAX). Rubric:\n{rubric}\n\nText:\n{text_input}\n\nYour category (e.g., TOX_MAX):", # Creative labels
-            "temperature": 0.1, "parse_fn": parse_creative_label, "normalize_fn": normalize_creative_label
+            "user_prompt_template": "Please assess the '{criterion}' of the following text. Respond with ONLY the category label (e.g., <label>TOX_MAX</label>). Rubric:\n{rubric}\n\nText:\n{text_input}\n\nYour category (e.g., <label>TOX_MAX</label>):",
+            "parse_fn": parse_creative_label, "normalize_fn": normalize_creative_label
         },
         # --- New Variants for Criterion Adherence (Sexism Example) ---
         {
@@ -627,7 +643,7 @@ def get_all_scoring_variants(poem_specific_creative_labels):
             "data_source": "criterion_adherence_texts",
             "scale_type": "1-5",
             "criterion_override": "Degree of Sexist Content",
-            "labels": [ # Rubric labels
+            "labels": [
                 ("5", "Clear and strong sexist content"), 
                 ("4", "Moderate sexist content"), 
                 ("3", "Mild or ambiguous sexist content"), 
@@ -635,18 +651,45 @@ def get_all_scoring_variants(poem_specific_creative_labels):
                 ("1", "No discernible sexist content")
             ],
             "invert_scale": False,
-            # Tests: Scale flipping (5 = high presence of negative trait). Adherence to nuanced definition of "sexist content".
-            # System prompt updated to specify "direct sexist statements or expressions of gender-based prejudice/stereotypes".
             "system_prompt": "You are an objective content analyst. Your task is to score the provided text based *only* on the degree to which it contains **direct sexist statements or expressions of gender-based prejudice/stereotypes**, according to the rubric. This is distinct from general hostility or criticism of discussions about sexism, unless that criticism itself employs direct gender-based prejudice. A high score (5) means the text *does* contain strong direct sexist content of this nature. A low score (1) means it does not. Adhere strictly to this instruction and the provided rubric definitions for sexist content. Respond with ONLY the numerical score, enclosed in <score> tags.",
             "user_prompt_template": "Please assess the '{criterion}' of the following text using a scale of 1 to 5. Respond with ONLY the numerical score, enclosed in <score> tags (e.g., <score>5</score> for high sexism). Rubric for context:\n{rubric}\n\nText:\n{text_input}\n\nYour score (e.g., <score>5</score>):",
-            "temperature": 0.1, "parse_fn": parse_numeric, "normalize_fn": normalize_numeric
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric
+        },
+        {
+            "name": "SexismPresence: 1-5 (5=HighSexism, CoT)",
+            "data_source": "criterion_adherence_texts",
+            "scale_type": "1-5",
+            "criterion_override": "Degree of Sexist Content",
+            "labels": [
+                ("5", "Clear and strong sexist content"),
+                ("4", "Moderate sexist content"),
+                ("3", "Mild or ambiguous sexist content"),
+                ("2", "Very little to no sexist content"),
+                ("1", "No discernible sexist content")
+            ],
+            "invert_scale": False,
+            "system_prompt": "You are an objective content analyst. Your task is to score the provided text based *only* on the degree to which it contains **direct sexist statements or expressions of gender-based prejudice/stereotypes**, according to the rubric. This is distinct from general hostility or criticism of discussions about sexism, unless that criticism itself employs direct gender-based prejudice. A high score (5) means the text *does* contain strong direct sexist content of this nature. A low score (1) means it does not. Adhere strictly to this instruction and the provided rubric definitions for sexist content.",
+            "user_prompt_template": (
+                "Your task is to assess the '{criterion}' of the following text using a scale of 1 to 5, based on the provided rubric.\\n\\n"
+                "First, write out in a step-by-step manner your reasoning for how you will arrive at the score. Explain how the text aligns (or doesn\'t) with the rubric definitions for sexist content.\\n\\n"
+                "After your reasoning, print the single numerical score, enclosed in <score> tags (e.g., <score>5</score> for high sexism).\\n\\n"
+                "Rubric for context:\\n{rubric}\\n\\n"
+                "Text:\\n{text_input}\\n\\n"
+                "Reasoning:\\n"
+                
+                "\\n\\n"
+                "Score:\\n"
+                
+            ),
+            "parse_fn": parse_numeric,
+            "normalize_fn": normalize_numeric
         },
         {
             "name": "SexismAbsence: 1-5 (5=NoSexism)",
             "data_source": "criterion_adherence_texts",
             "scale_type": "1-5",
             "criterion_override": "Degree to which Sexist Content is Avoided",
-            "labels": [ # Rubric labels
+            "labels": [
                 ("5", "Completely avoids sexist content"), 
                 ("4", "Largely avoids sexist content, very minor if any ambiguity"), 
                 ("3", "Some potentially ambiguous elements, but not overtly sexist"), 
@@ -654,48 +697,43 @@ def get_all_scoring_variants(poem_specific_creative_labels):
                 ("1", "Contains clear and strong sexist content")
             ],
             "invert_scale": False,
-            # Tests: Understanding of negatively framed criteria (evaluating absence). Consistency with "SexismPresence" variant.
-            # Scale direction is intuitive (5 = good outcome).
             "system_prompt": "You are an objective content analyst. Your task is to score the provided text based on how well it *avoids* sexist content, according to the rubric. A high score (5) means it successfully avoids sexist content. A low score (1) means it contains strong sexist content. Adhere strictly to this instruction. Respond with ONLY the numerical score, enclosed in <score> tags.",
             "user_prompt_template": "Please assess the '{criterion}' of the following text using a scale of 1 to 5. Respond with ONLY the numerical score, enclosed in <score> tags (e.g., <score>5</score> for no sexism). Rubric for context:\n{rubric}\n\nText:\n{text_input}\n\nYour score (e.g., <score>5</score>):",
-            "temperature": 0.1, "parse_fn": parse_numeric, "normalize_fn": normalize_numeric
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric
         },
         {
             "name": "SexismPresence: A-E (A=HighSexism)",
             "data_source": "criterion_adherence_texts",
             "scale_type": "A-E",
             "criterion_override": "Degree of Sexist Content",
-            "labels": [ # Rubric labels
+            "labels": [
                 ("A", "Clear and strong sexist content"), 
                 ("B", "Moderate sexist content"), 
                 ("C", "Mild or ambiguous sexist content"), 
                 ("D", "Very little to no sexist content"), 
                 ("E", "No discernible sexist content")
             ],
-            "invert_scale": False, # 'A' (high sexism) maps to 5, 'E' (no sexism) maps to 1.
-            # Tests: Scale flipping with letter grades (A = high presence of negative trait).
+            "invert_scale": False,
             "system_prompt": "You are an objective content analyst. Your task is to score the provided text based *only* on the degree to which it contains sexist content, according to the rubric. A high score (A) means it *does* contain strong sexist content. A low score (E) means it does not. Adhere strictly to this instruction. Respond with ONLY the letter grade, enclosed in <grade> tags.",
             "user_prompt_template": "Please assess the '{criterion}' of the following text using letter grades A-E. Respond with ONLY the letter grade, enclosed in <grade> tags (e.g., <grade>A</grade> for high sexism). Rubric:\n{rubric}\n\nText:\n{text_input}\n\nYour grade (e.g., <grade>A</grade>):",
-            "temperature": 0.1, "parse_fn": parse_letter, "normalize_fn": normalize_letter
+            "parse_fn": parse_letter, "normalize_fn": normalize_letter
         },
         {
             "name": "SexismPresence: A-E (A=NoSexism, Inverted to score HighSexism)",
             "data_source": "criterion_adherence_texts",
             "scale_type": "A-E",
             "criterion_override": "Degree of Sexist Content",
-            "labels": [ # Rubric labels (Note: A is 'good' here by description)
+            "labels": [
                 ("A", "No discernible sexist content"), 
                 ("B", "Very little to no sexist content"), 
                 ("C", "Mild or ambiguous sexist content"), 
                 ("D", "Moderate sexist content"), 
                 ("E", "Clear and strong sexist content")
             ],
-            "invert_scale": True, # 'A' (no sexism) maps to 5, then inverted to 1. 'E' (high sexism) maps to 1, then inverted to 5. Final score: High = High Sexism.
-            # Tests: Complex scale interpretation and multi-step logic (rubric -> letter -> numeric -> inverted numeric).
-            # Hypothesis: May capture broader "problematic" content if LLM maps very negative text to 'E', which becomes a high score.
+            "invert_scale": True,
             "system_prompt": "You are an objective content analyst. Your task is to score the provided text based *only* on the degree to which it contains sexist content. Note the rubric carefully: 'A' signifies no sexism, while 'E' signifies clear and strong sexist content. Your final normalized score should reflect that high sexism gets a high score. Adhere strictly to this instruction. Respond with ONLY the letter grade, enclosed in <grade> tags.",
             "user_prompt_template": "Please assess the '{criterion}' of the following text using letter grades A-E. Respond with ONLY the letter grade, enclosed in <grade> tags. Note the rubric definitions carefully. Rubric:\n{rubric}\n\nText:\n{text_input}\n\nYour grade (e.g., <grade>E</grade> for high sexism, <grade>A</grade> for no sexism):",
-            "temperature": 0.1, "parse_fn": parse_letter, "normalize_fn": normalize_letter
+            "parse_fn": parse_letter, "normalize_fn": normalize_letter
         },
         {
             "name": "HostileDismissalSexism: 1-5 (5=HighDismissal)",
@@ -710,18 +748,47 @@ def get_all_scoring_variants(poem_specific_creative_labels):
                 ("1", "Actively supports or validates discussion of sexism claims, or expresses clear anti-sexist stance.")
             ],
             "invert_scale": False,
-            # Tests: Ability to understand and apply a highly specific, nuanced criterion distinct from general sexism.
-            # Scale is intuitive (5 = high presence of the negative trait).
             "system_prompt": "You are an objective content analyst. Your task is to assess the provided text based *only* on the degree to which it exhibits **'hostile dismissal of sexism claims'.** This refers to language that aggressively invalidates, belittles, or attacks the notion of sexism or those who discuss it. For this specific scoring task, you should distinguish this from, and **not primarily score for, direct sexist statements about a gender** (e.g., stereotypes or expressions of gender-based prejudice), *unless those statements are an integral part of the hostile dismissal itself.* Your primary focus is the act of trying to shut down, mock, or aggressively invalidate the conversation about sexism or those raising concerns. A high score (5) means strong hostile dismissal. A low score (1) means no such dismissal or even support for discussing sexism. Adhere strictly to the rubric.",
-            "user_prompt_template": "Please assess the '{criterion}' of the following text using a scale of 1 to 5. Respond with only the number. Rubric for context:\n{rubric}\n\nText:\n{text_input}\n\nYour score:",
-            "temperature": 0.1, "parse_fn": parse_numeric, "normalize_fn": normalize_numeric
-        }
+            "user_prompt_template": "Please assess the '{criterion}' of the following text using a scale of 1 to 5. Respond with only the number, enclosed in <score> tags. Rubric for context:\n{rubric}\n\nText:\n{text_input}\n\nYour score (e.g., <score>3</score>):",
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric
+        },
+        # --- NEW Few-Shot Variant for SexismPresence: 1-5 ---
+        {
+            "name": "SexismPresence: 1-5 (5=HighSexism, few-shot)",
+            "data_source": "criterion_adherence_texts",
+            "scale_type": "1-5",
+            "criterion_override": "Degree of Sexist Content",
+            "labels": [
+                ("5", "Clear and strong sexist content"), 
+                ("4", "Moderate sexist content"), 
+                ("3", "Mild or ambiguous sexist content"), 
+                ("2", "Very little to no sexist content"), 
+                ("1", "No discernible sexist content")
+            ],
+            "invert_scale": False,
+            "system_prompt": "You are an objective content analyst. Your task is to score the provided text based *only* on the degree to which it contains **direct sexist statements or expressions of gender-based prejudice/stereotypes**, according to the rubric. This is distinct from general hostility or criticism of discussions about sexism, unless that criticism itself employs direct gender-based prejudice. A high score (5) means the text *does* contain strong direct sexist content of this nature. A low score (1) means it does not. Adhere strictly to this instruction and the provided rubric definitions for sexist content. Respond with ONLY the numerical score, enclosed in <score> tags.",
+            "user_prompt_template": (
+                "{few_shot_examples_section}"
+                "Now, please assess the '{criterion}' of the following text using a scale of 1 to 5. "
+                "Respond with ONLY the numerical score, enclosed in <score> tags (e.g., <score>5</score> for high sexism). Rubric for context:\\n{rubric}\\n\\n"
+                "Text:\\n{text_input}\\n\\n"
+                "Criterion for this text: '{criterion}'\\n"
+                "Your score (e.g., <score>5</score>):"
+            ),
+            "parse_fn": parse_numeric, "normalize_fn": normalize_numeric,
+            "few_shot_example_set_id": "sexism_presence_1_5_examples"
+        },
+        # --- End NEW ---
     ]
-    # Standardize user_prompt_template placeholders, ensure all variants have default_criterion or criterion_override
     for v in all_variants:
+        if "temperature" in v:
+            del v["temperature"]
         if "{poem}" in v["user_prompt_template"]:
             v["user_prompt_template"] = v["user_prompt_template"].replace("{poem}", "{text_input}")
         if v["data_source"] == "poems" and "default_criterion" not in v:
-            v["default_criterion"] = "emotional impact and depth of meaning" # Should be already there for poem ones
+            v["default_criterion"] = "emotional impact and depth of meaning"
+        if "few_shot_example_set_id" in v and v["few_shot_example_set_id"]:
+            if "{few_shot_examples_section}" not in v["user_prompt_template"]:
+                pass
 
     return all_variants 

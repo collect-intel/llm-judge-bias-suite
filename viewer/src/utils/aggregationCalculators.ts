@@ -3,10 +3,38 @@ import { AggregatedPickingSummary, AggregatedPickingVariantSchemeData } from '@/
 import { AggregatedScoringOverallSummary, AggregatedScoringVariantSummary, AggregatedScoringItemStats } from '@/types/aggregatedScoring';
 import { ScoringVariantResult, ScoringItemResult } from '@/types/scoringExperiment';
 import { AggregatedEloOverallSummary, AggregatedEloVariantSummary, AggregatedEloItemStats } from '@/types/aggregatedPairwiseElo';
-import { PairwiseEloExperimentDataWrapper } from '@/types/pairwiseEloExperiment';
-import { AggregatedAdvancedPermutedOverallSummary, AggregatedPermutedItemSummary, AggregatedPermutedItemCriterionComparison, AggregatedPermutedCriterionOrderStats } from '@/types/aggregatedAdvancedPermuted';
-import { PermutedOrderExperimentData, IsolatedHolisticExperimentData } from '@/types/advancedMultiCriteriaExperiment';
+import { PairwiseEloExperimentDataWrapper, EloItemVariantSummary } from '@/types/pairwiseEloExperiment';
+import {
+    AggregatedAdvancedPermutedOverallSummary,
+    AggregatedPermutedItemSummary,
+    AggregatedPermutedItemCriterionComparison,
+    AggregatedPermutedCriterionOrderStats
+} from '@/types/aggregatedAdvancedPermuted';
+import {
+    PermutedOrderExperimentData,
+    IsolatedHolisticExperimentData,
+    PermutedOrderItemSummary,
+    PermutedOrderCriterionComparison,
+    PermutedOrderScoreStats,
+    IsolatedHolisticItemSummary,
+    IsolatedHolisticScoreDetail,
+} from '@/types/advancedMultiCriteriaExperiment';
 import { AggregatedAdvancedIsolatedOverallSummary, AggregatedIsolatedItemSummary, AggregatedIsolatedHolisticCriterionStats } from '@/types/aggregatedAdvancedIsolated';
+import {
+    ClassificationExperimentData,
+    ClassificationItemStrategyPairResult,
+    ClassificationItemDetails,
+    ClassificationStrategyDetails
+} from '@/types/classificationExperiment';
+import {
+    AggregatedClassificationOverallSummary,
+    AggregatedClassificationItemSummary,
+    AggregatedClassificationModelStats,
+    AggregatedClassificationCell,
+    AggregatedClassificationModelPerformance,
+    AggregatedClassificationSensitiveItem,
+    AggregatedClassificationStrategyStats
+} from '../types/aggregatedClassification';
 
 interface PickingPairDetail {
   pair_id: string;
@@ -36,7 +64,8 @@ interface PickingExperimentSchemeResult {
   favored_scheme_label2_count: number;
   favored_position_inconclusive_count: number;
   valid_pairs_for_bias_calculation: number;
-
+  system_prompt_used?: string | null;
+  user_prompt_template_used?: string | null;
 }
 
 type PickingExperimentApiResponse = PickingExperimentSchemeResult[];
@@ -50,7 +79,17 @@ export interface ModelDataForAggregation {
   isolatedHolisticData?: IsolatedHolisticExperimentData | null;
 }
 
-export type ModelDataStatesForAggregation = Record<string, ModelDataForAggregation>;
+export interface ModelDataStatesForAggregation {
+    [modelName: string]: {
+        rawPickingData?: any | null;
+        processedPickingData?: any[] | null;
+        scoringExperimentData?: any | null;
+        pairwiseEloData?: any | null;
+        permutedOrderData?: any | null;
+        isolatedHolisticData?: any | null;
+        classificationExperimentData?: ClassificationExperimentData | null;
+    };
+}
 
 export const calculateAggregatedPickingData = (
     modelDataStates: ModelDataStatesForAggregation,
@@ -61,7 +100,6 @@ export const calculateAggregatedPickingData = (
     }
 
     const allRawPickingDataFromModels: { modelName: string, rawData: PickingExperimentApiResponse }[] = [];
-    const allProcessedDataForAverages: { modelName: string, data: ProcessedPickingData[] }[] = [];
 
     currentSelectedModels.forEach(modelName => {
       const modelState = modelDataStates[modelName];
@@ -69,99 +107,78 @@ export const calculateAggregatedPickingData = (
         if (modelState.rawPickingData && modelState.rawPickingData.length > 0) {
           allRawPickingDataFromModels.push({ modelName, rawData: modelState.rawPickingData });
         }
-        if (modelState.processedPickingData && modelState.processedPickingData.length > 0) {
-          allProcessedDataForAverages.push({ modelName, data: modelState.processedPickingData });
-        }
       }
     });
 
-    if (allRawPickingDataFromModels.length === 0 && allProcessedDataForAverages.length === 0) {
+    if (allRawPickingDataFromModels.length === 0) {
       return null;
     }
 
-    const groupedByVariantSchemeForAverages: Record<string, {
+    const groupedByVariantScheme: Record<string, {
       variantName: string;
       labelingSchemeName: string;
-      schemeDescription: string;
-      schemeDisplayLabel1: string;
-      schemeDisplayLabel2: string;
-      biasRates: number[];
-      consistencyRates: number[];
-      favoredLabel1Counts: number[];
-      favoredLabel2Counts: number[];
-      favoredPositionInconclusiveCounts: number[];
-      modelsShowingBiasCounts: number[];
+      schemeDescription_temp?: string;
+      schemeDisplayLabel1_temp?: string;
+      schemeDisplayLabel2_temp?: string;
       modelNames: Set<string>;
       totalFirstSlotPicks_temp: number;
       totalDecisions_temp: number;
+      systemPromptUsed_temp?: string | null;
+      userPromptTemplateUsed_temp?: string | null;
     }> = {};
-
-    allProcessedDataForAverages.forEach(modelEntry => {
-      modelEntry.data.forEach(item => {
-        const key = `${item.variantName}---${item.labelingSchemeName}`;
-        if (!groupedByVariantSchemeForAverages[key]) {
-          groupedByVariantSchemeForAverages[key] = {
-            variantName: item.variantName,
-            labelingSchemeName: item.labelingSchemeName,
-            schemeDescription: item.schemeDescription,
-            schemeDisplayLabel1: item.schemeDisplayLabel1,
-            schemeDisplayLabel2: item.schemeDisplayLabel2,
-            biasRates: [], consistencyRates: [], favoredLabel1Counts: [],
-            favoredLabel2Counts: [], favoredPositionInconclusiveCounts: [],
-            modelsShowingBiasCounts: [], modelNames: new Set<string>(),
-            totalFirstSlotPicks_temp: 0, totalDecisions_temp: 0,
-          };
-        }
-        const group = groupedByVariantSchemeForAverages[key];
-        group.modelNames.add(modelEntry.modelName);
-        if (item.biasRate !== undefined) group.biasRates.push(item.biasRate);
-        if (item.consistencyRate !== undefined) group.consistencyRates.push(item.consistencyRate);
-        
-        const hasBias = item.biasRate > 0 && item.totalValidPairsForBias > 0;
-        group.modelsShowingBiasCounts.push(hasBias ? 1 : 0);
-        group.favoredLabel1Counts.push(item.favoredLabel1Count > 0 ? 1 : 0);
-        group.favoredLabel2Counts.push(item.favoredLabel2Count > 0 ? 1 : 0);
-        group.favoredPositionInconclusiveCounts.push(item.favoredPositionInconclusiveCount > 0 ? 1 : 0);
-      });
-    });
 
     allRawPickingDataFromModels.forEach(modelEntry => {
       modelEntry.rawData.forEach(schemeResult => {
         const key = `${schemeResult.variant_name}---${schemeResult.labeling_scheme_name}`;
-        if (groupedByVariantSchemeForAverages[key]) {
-          const group = groupedByVariantSchemeForAverages[key];
-          group.modelNames.add(modelEntry.modelName);
-
-          schemeResult.pairs_summary_for_scheme.forEach(pairDetail => {
-            const reps = schemeResult.repetitions_per_order_run || 1;
-            
-            const run1Slot1ContentKey = "text_A";
-            const run1PicksForSlot1 = pairDetail.run1_pick_distribution?.[run1Slot1ContentKey] || 0;
-            group.totalFirstSlotPicks_temp += run1PicksForSlot1;
-            group.totalDecisions_temp += reps;
-
-            const run2Slot1ContentKey = "text_B"; 
-            const run2PicksForSlot1 = pairDetail.run2_pick_distribution?.[run2Slot1ContentKey] || 0;
-            group.totalFirstSlotPicks_temp += run2PicksForSlot1;
-            group.totalDecisions_temp += reps;
-          });
+        if (!groupedByVariantScheme[key]) {
+          groupedByVariantScheme[key] = {
+            variantName: schemeResult.variant_name,
+            labelingSchemeName: schemeResult.labeling_scheme_name,
+            schemeDescription_temp: schemeResult.scheme_description,
+            schemeDisplayLabel1_temp: schemeResult.scheme_display_label1,
+            schemeDisplayLabel2_temp: schemeResult.scheme_display_label2,
+            modelNames: new Set<string>(),
+            totalFirstSlotPicks_temp: 0,
+            totalDecisions_temp: 0,
+            systemPromptUsed_temp: schemeResult.system_prompt_used,
+            userPromptTemplateUsed_temp: schemeResult.user_prompt_template_used,
+          };
+        } else {
+          // Ensure description and labels are consistent if already set, or set if not
+          // Also ensure prompts are captured if not already set from a previous model for this key
+          const existingGroup = groupedByVariantScheme[key];
+          if (!existingGroup.schemeDescription_temp) existingGroup.schemeDescription_temp = schemeResult.scheme_description;
+          if (!existingGroup.schemeDisplayLabel1_temp) existingGroup.schemeDisplayLabel1_temp = schemeResult.scheme_display_label1;
+          if (!existingGroup.schemeDisplayLabel2_temp) existingGroup.schemeDisplayLabel2_temp = schemeResult.scheme_display_label2;
+          if (existingGroup.systemPromptUsed_temp === undefined) { 
+            existingGroup.systemPromptUsed_temp = schemeResult.system_prompt_used;
+          }
+          if (existingGroup.userPromptTemplateUsed_temp === undefined) { 
+            existingGroup.userPromptTemplateUsed_temp = schemeResult.user_prompt_template_used;
+          }
         }
+
+        const group = groupedByVariantScheme[key]; // Define group here, after it's potentially initialized
+        group.modelNames.add(modelEntry.modelName);
+
+        schemeResult.pairs_summary_for_scheme.forEach(pairDetail => {
+          const reps = schemeResult.repetitions_per_order_run || 1;
+          
+          const run1PicksForSlot1 = pairDetail.run1_pick_distribution?.["text_A"] || 0;
+          group.totalFirstSlotPicks_temp += run1PicksForSlot1;
+          group.totalDecisions_temp += reps; 
+
+          const run2PicksForSlot1 = pairDetail.run2_pick_distribution?.["text_B"] || 0;
+          group.totalFirstSlotPicks_temp += run2PicksForSlot1; 
+          group.totalDecisions_temp += reps; 
+        });
       });
     });
     
     let grandTotalFirstSlotPicks_overall = 0;
     let grandTotalDecisions_overall = 0;
 
-    const aggregatedVariantSchemes: AggregatedPickingVariantSchemeData[] = Object.values(groupedByVariantSchemeForAverages).map(group => {
-      const biasRates = group.biasRates.filter(r => r !== undefined && !isNaN(r));
-      const consistencyRates = group.consistencyRates.filter(r => r !== undefined && !isNaN(r));
-      
-      const avgBias = biasRates.length > 0 ? biasRates.reduce((a, b) => a + b, 0) / biasRates.length : 0;
-      const stdDevBias = biasRates.length > 1 ? Math.sqrt(biasRates.map(x => Math.pow(x - avgBias, 2)).reduce((a, b) => a + b, 0) / (biasRates.length -1)) : 0;
-      
-      const avgConsistency = consistencyRates.length > 0 ? consistencyRates.reduce((a, b) => a + b, 0) / consistencyRates.length : 0;
-      const stdDevConsistency = consistencyRates.length > 1 ? Math.sqrt(consistencyRates.map(x => Math.pow(x - avgConsistency, 2)).reduce((a, b) => a + b, 0) / (consistencyRates.length -1)) : 0;
-
+    const aggregatedVariantSchemes: AggregatedPickingVariantSchemeData[] = Object.values(groupedByVariantScheme).map(group => {
       const overallFirstSlotPreferencePercentage = group.totalDecisions_temp > 0
         ? (group.totalFirstSlotPicks_temp / group.totalDecisions_temp) * 100
         : 0;
@@ -172,21 +189,15 @@ export const calculateAggregatedPickingData = (
       return {
         variantName: group.variantName,
         labelingSchemeName: group.labelingSchemeName,
-        schemeDescription: group.schemeDescription,
-        schemeDisplayLabel1: group.schemeDisplayLabel1,
-        schemeDisplayLabel2: group.schemeDisplayLabel2,
+        schemeDescription: group.schemeDescription_temp || 'N/A',
+        schemeDisplayLabel1: group.schemeDisplayLabel1_temp || 'L1',
+        schemeDisplayLabel2: group.schemeDisplayLabel2_temp || 'L2',
         modelCount: group.modelNames.size,
-        averageBiasRate: parseFloat(avgBias.toFixed(2)),
-        stdDevBiasRate: parseFloat(stdDevBias.toFixed(2)),
-        averageConsistencyRate: parseFloat(avgConsistency.toFixed(2)),
-        stdDevConsistencyRate: parseFloat(stdDevConsistency.toFixed(2)),
-        totalModelsFavoredLabel1: group.favoredLabel1Counts.reduce((a,b) => a+b, 0),
-        totalModelsFavoredLabel2: group.favoredLabel2Counts.reduce((a,b) => a+b, 0),
-        totalModelsFavoredPositionInconclusive: group.favoredPositionInconclusiveCounts.reduce((a,b) => a+b, 0),
-        totalModelsShowingBias: group.modelsShowingBiasCounts.reduce((a,b) => a+b, 0),
         totalFirstSlotPicksAcrossModelsAndRepetitions: group.totalFirstSlotPicks_temp,
         totalDecisionsAcrossModelsAndRepetitions: group.totalDecisions_temp,
         overallFirstSlotPreferencePercentage: parseFloat(overallFirstSlotPreferencePercentage.toFixed(2)),
+        systemPromptUsed: group.systemPromptUsed_temp,
+        userPromptTemplateUsed: group.userPromptTemplateUsed_temp,
       };
     });
     
@@ -196,8 +207,7 @@ export const calculateAggregatedPickingData = (
 
     return {
       experimentType: 'picking',
-      overallModelCount: new Set(allRawPickingDataFromModels.map(m => m.modelName)
-                                .concat(allProcessedDataForAverages.map(m => m.modelName))).size,
+      overallModelCount: new Set(allRawPickingDataFromModels.map(m => m.modelName)).size,
       aggregatedVariantSchemes: aggregatedVariantSchemes.sort((a,b) => a.variantName.localeCompare(b.variantName) || a.labelingSchemeName.localeCompare(b.labelingSchemeName)),
       grandTotalFirstSlotPicks: grandTotalFirstSlotPicks_overall,
       grandTotalDecisions: grandTotalDecisions_overall,
@@ -335,7 +345,7 @@ export const calculateAggregatedEloData = (
     currentSelectedModels.forEach(modelName => {
       const modelState = modelDataStates[modelName];
       if (modelState && modelState.pairwiseEloData && modelState.pairwiseEloData.variants_summary) {
-        modelState.pairwiseEloData.variants_summary.forEach(itemSummary => {
+        modelState.pairwiseEloData.variants_summary.forEach((itemSummary: EloItemVariantSummary) => {
           allEloVariantDataFromModels.push({
             modelName,
             criterion: modelState.pairwiseEloData?.criterion,
@@ -476,17 +486,17 @@ export const calculateAggregatedPermutedData = (
     currentSelectedModels.forEach(modelName => {
       const modelState = modelDataStates[modelName];
       if (modelState && modelState.permutedOrderData) {
-        modelState.permutedOrderData.forEach(itemSummary => {
+        modelState.permutedOrderData.forEach((itemSummary: PermutedOrderItemSummary) => {
           if (!firstTaskName) {
-            const firstOrderName = itemSummary.order_comparison_results[0]?.scores_by_order 
-                                 ? Object.keys(itemSummary.order_comparison_results[0].scores_by_order)[0] 
+            const firstOrderName = itemSummary.order_comparison_results[0]?.scores_by_order
+                                 ? Object.keys(itemSummary.order_comparison_results[0].scores_by_order)[0]
                                  : undefined;
             if (firstOrderName && firstOrderName.includes('_')) {
-              firstTaskName = firstOrderName.split('_').pop()?.substring(0,3); 
+              firstTaskName = firstOrderName.split('_').pop()?.substring(0,3);
             }
           }
-          itemSummary.order_comparison_results.forEach(criterionComp => {
-            Object.entries(criterionComp.scores_by_order).forEach(([orderName, stats]) => {
+          itemSummary.order_comparison_results.forEach((criterionComp: PermutedOrderCriterionComparison) => {
+            Object.entries(criterionComp.scores_by_order).forEach(([orderName, stats]: [string, PermutedOrderScoreStats]) => {
               if (stats.avg !== null) {
                 allPermutedData.push({
                   modelName,
@@ -507,7 +517,7 @@ export const calculateAggregatedPermutedData = (
 
     if (allPermutedData.length === 0) return null;
 
-    const finalTaskName = firstTaskName || "UnknownTask"; 
+    const finalTaskName = firstTaskName || "UnknownTask";
     const uniqueModelsOverall = new Set(allPermutedData.map(d => d.modelName));
     const aggregatedItems: AggregatedPermutedItemSummary[] = [];
 
@@ -594,13 +604,13 @@ export const calculateAggregatedIsolatedData = (
     currentSelectedModels.forEach(modelName => {
       const modelState = modelDataStates[modelName];
       if (modelState && modelState.isolatedHolisticData) {
-        modelState.isolatedHolisticData.forEach(itemSummary => {
+        modelState.isolatedHolisticData.forEach((itemSummary: IsolatedHolisticItemSummary) => {
           if (!firstTaskNameIsolated && itemSummary.item_title) {
              if (itemSummary.item_title.toLowerCase().includes('argument')) firstTaskNameIsolated = "Argument";
              else if (itemSummary.item_title.toLowerCase().includes('story')) firstTaskNameIsolated = "StoryOpening";
           }
 
-          itemSummary.comparison_details.forEach(detail => {
+          itemSummary.comparison_details.forEach((detail: IsolatedHolisticScoreDetail) => {
             allIsolatedData.push({
               modelName,
               taskName: "IsolatedHolisticTask", 
@@ -685,3 +695,219 @@ export const calculateAggregatedIsolatedData = (
       itemSummaries: aggregatedItemsIsolated.sort((a,b) => a.itemId.localeCompare(b.itemId)),
     };
   }; 
+
+export function calculateAggregatedClassificationData(
+    modelData: ModelDataStatesForAggregation,
+    selectedModels: string[]
+): AggregatedClassificationOverallSummary | null {
+    const allProcessedItemStrategyPairsWithModel: Array<ClassificationItemStrategyPairResult & { modelOwner: string }> = [];
+    const modelsProcessed: string[] = [];
+
+    for (const modelName of selectedModels) {
+        const dataForModel = modelData[modelName]?.classificationExperimentData;
+        if (dataForModel && dataForModel.length > 0) {
+            modelsProcessed.push(modelName);
+            dataForModel.forEach(pairResult => {
+                allProcessedItemStrategyPairsWithModel.push({...pairResult, modelOwner: modelName });
+            });
+        }
+    }
+
+    if (allProcessedItemStrategyPairsWithModel.length === 0 || modelsProcessed.length === 0) {
+        return null;
+    }
+
+    const uniqueItems = new Map<string, ClassificationItemDetails>();
+    const uniqueStrategies = new Map<string, ClassificationStrategyDetails>();
+    allProcessedItemStrategyPairsWithModel.forEach(pair => {
+        if (!uniqueItems.has(pair.item_details.item_id)) {
+            uniqueItems.set(pair.item_details.item_id, pair.item_details);
+        }
+        if (!uniqueStrategies.has(pair.prompt_variant_id)) {
+            uniqueStrategies.set(pair.prompt_variant_id, pair.prompt_variant_details);
+        }
+    });
+
+    const totalUniqueItemsAnalysed = uniqueItems.size;
+    let totalAmbiguousItemsInSet = 0;
+    let totalControlItemsInSet = 0;
+    uniqueItems.forEach(item => {
+        if (item.is_control_item === false && (item.ambiguity_score || 0) > 0.5) totalAmbiguousItemsInSet++;
+        if (item.is_control_item === true) totalControlItemsInSet++;
+    });
+
+    const modelOverallStats: AggregatedClassificationModelStats[] = [];
+    const itemSensitivityTracker: Record<string, { 
+        classificationsByModelStrategy: Record<string, Set<string>>,
+        modelsShowingSensitivityForThisItem: Set<string>
+        itemDetails?: ClassificationItemDetails
+        distinctChosenCategoriesOverall: Set<string>
+        classificationCounts: Record<string, number>
+    }> = {};
+
+    modelsProcessed.forEach(modelName => {
+        let totalItemsSeenByModel = 0;
+        let totalAmbiguousItemsSeenByModel = 0;
+        let sensitiveItemCount = 0;
+        const escapeHatchStats = { totalUses: 0, onAmbiguousItems: 0, onControlItems: 0 };
+        
+        const itemsProcessedByThisModelThisSession = new Set<string>();
+        const classificationsByItemForThisModel: Record<string, Set<string>> = {};
+
+        allProcessedItemStrategyPairsWithModel.forEach(pair => {
+            if (pair.modelOwner === modelName) {
+                itemsProcessedByThisModelThisSession.add(pair.item_details.item_id);
+                totalItemsSeenByModel++;
+
+                if (!classificationsByItemForThisModel[pair.item_details.item_id]) {
+                    classificationsByItemForThisModel[pair.item_details.item_id] = new Set();
+                }
+                if (pair.llm_chosen_category_id) {
+                    classificationsByItemForThisModel[pair.item_details.item_id].add(pair.llm_chosen_category_id);
+                }
+
+                const strategyDetails = uniqueStrategies.get(pair.prompt_variant_id);
+                if (strategyDetails?.escape_hatch_config && pair.llm_chosen_category_id === strategyDetails.escape_hatch_config.id) {
+                    escapeHatchStats.totalUses++;
+                    if (pair.item_details.is_control_item === false && (pair.item_details.ambiguity_score || 0) > 0.5) {
+                        escapeHatchStats.onAmbiguousItems++;
+                    }
+                    if (pair.item_details.is_control_item === true) {
+                        escapeHatchStats.onControlItems++;
+                    }
+                }
+
+                if (!itemSensitivityTracker[pair.item_details.item_id]) {
+                    itemSensitivityTracker[pair.item_details.item_id] = {
+                        classificationsByModelStrategy: {},
+                        modelsShowingSensitivityForThisItem: new Set(),
+                        itemDetails: pair.item_details,
+                        distinctChosenCategoriesOverall: new Set(),
+                        classificationCounts: {}
+                    };
+                }
+                if (!itemSensitivityTracker[pair.item_details.item_id].classificationsByModelStrategy[modelName]) {
+                    itemSensitivityTracker[pair.item_details.item_id].classificationsByModelStrategy[modelName] = new Set();
+                }
+                if (pair.llm_chosen_category_id) {
+                    itemSensitivityTracker[pair.item_details.item_id].classificationsByModelStrategy[modelName].add(pair.llm_chosen_category_id);
+                    itemSensitivityTracker[pair.item_details.item_id].distinctChosenCategoriesOverall.add(pair.llm_chosen_category_id);
+                    itemSensitivityTracker[pair.item_details.item_id].classificationCounts[pair.llm_chosen_category_id] = 
+                        (itemSensitivityTracker[pair.item_details.item_id].classificationCounts[pair.llm_chosen_category_id] || 0) + 1;
+                }
+            }
+        });
+
+        itemsProcessedByThisModelThisSession.forEach(itemId => {
+            const item = uniqueItems.get(itemId);
+            if (item && item.is_control_item === false && (item.ambiguity_score || 0) > 0.5) {
+                totalAmbiguousItemsSeenByModel++;
+                if (classificationsByItemForThisModel[itemId] && classificationsByItemForThisModel[itemId].size > 1) {
+                    sensitiveItemCount++;
+                    if(itemSensitivityTracker[itemId]) {
+                        itemSensitivityTracker[itemId].modelsShowingSensitivityForThisItem.add(modelName);
+                    }
+                }
+            }
+        });
+
+        modelOverallStats.push({
+            modelName,
+            totalItemsSeenByModel, 
+            totalAmbiguousItemsSeenByModel,
+            sensitiveItemCount,
+            sensitivityScore: totalAmbiguousItemsSeenByModel > 0 ? (sensitiveItemCount / totalAmbiguousItemsSeenByModel) * 100 : 0,
+            escapeHatchStats
+        });
+    });
+
+    const topSensitiveItems: AggregatedClassificationSensitiveItem[] = Object.entries(itemSensitivityTracker)
+        .map(([itemId, data]) => ({
+            itemId,
+            itemTextSnippet: data.itemDetails?.item_text.substring(0, 50) + (data.itemDetails && data.itemDetails.item_text.length > 50 ? '...' : '') || 'N/A',
+            ambiguityScore: data.itemDetails?.ambiguity_score || 0,
+            isControlItem: data.itemDetails?.is_control_item || false,
+            itemDiversityScore: data.distinctChosenCategoriesOverall.size,
+            distinctClassifications: Object.entries(data.classificationCounts).map(([catId, count]) => ({categoryId: catId, count})).sort((a,b) => b.count - a.count),
+            modelsShowingSensitivity: Array.from(data.modelsShowingSensitivityForThisItem)
+        }))
+        .sort((a, b) => b.itemDiversityScore - a.itemDiversityScore || (b.ambiguityScore || 0) - (a.ambiguityScore || 0) )
+        .slice(0, 20);
+
+    const strategyStats: AggregatedClassificationStrategyStats[] = [];
+    uniqueStrategies.forEach((strategyDetails, strategyId) => {
+        const pairsForThisStrategy = allProcessedItemStrategyPairsWithModel.filter(p => p.prompt_variant_id === strategyId);
+        if (pairsForThisStrategy.length === 0) return;
+
+        const modelsThatUsedThisStrategy = new Set(pairsForThisStrategy.map(p => p.modelOwner));
+        const itemsProcessedWithThisStrategy = new Map<string, { classifications: string[], models: Set<string> }>();
+
+        pairsForThisStrategy.forEach(pair => {
+            if (!itemsProcessedWithThisStrategy.has(pair.item_details.item_id)) {
+                itemsProcessedWithThisStrategy.set(pair.item_details.item_id, { classifications: [], models: new Set() });
+            }
+            if (pair.llm_chosen_category_id) {
+                itemsProcessedWithThisStrategy.get(pair.item_details.item_id)!.classifications.push(pair.llm_chosen_category_id);
+            }
+            itemsProcessedWithThisStrategy.get(pair.item_details.item_id)!.models.add(pair.modelOwner);
+        });
+
+        let totalItemDiversityScoreSum = 0;
+        let itemsWithUnanimousAgreementCount = 0;
+        const uniqueItemIdsForThisStrategy = new Set<string>();
+
+        itemsProcessedWithThisStrategy.forEach((data, itemId) => {
+            uniqueItemIdsForThisStrategy.add(itemId);
+            const uniqueClassificationsForItemAmongModels = new Set(data.classifications);
+            totalItemDiversityScoreSum += uniqueClassificationsForItemAmongModels.size;
+            
+            if (data.models.size > 0 && data.classifications.length > 0) {
+                const firstModelClassification = data.classifications[0];
+                if (data.classifications.every(c => c === firstModelClassification)) {
+                    itemsWithUnanimousAgreementCount++;
+                }
+            }
+        });
+        
+        const uniqueItemsCountForStrategy = uniqueItemIdsForThisStrategy.size;
+        const avgItemDiversity = uniqueItemsCountForStrategy > 0 ? totalItemDiversityScoreSum / uniqueItemsCountForStrategy : 0;
+        const percUnanimous = uniqueItemsCountForStrategy > 0 ? (itemsWithUnanimousAgreementCount / uniqueItemsCountForStrategy) * 100 : 0;
+
+        strategyStats.push({
+            strategyId,
+            strategyDescription: strategyDetails.description,
+            experimentalFocus: strategyDetails.experimental_focus || null,
+            averageItemClassificationDiversity: parseFloat(avgItemDiversity.toFixed(2)),
+            percentageItemsWithUnanimousAgreement: parseFloat(percUnanimous.toFixed(2)),
+            totalItemModelPairsEvaluated: pairsForThisStrategy.length,
+            uniqueModelsThatUsedStrategyCount: modelsThatUsedThisStrategy.size,
+            uniqueItemIdsProcessedCount: uniqueItemsCountForStrategy,
+        });
+    });
+
+    strategyStats.sort((a, b) => {
+        if (b.percentageItemsWithUnanimousAgreement !== a.percentageItemsWithUnanimousAgreement) {
+            return b.percentageItemsWithUnanimousAgreement - a.percentageItemsWithUnanimousAgreement;
+        }
+        if (a.averageItemClassificationDiversity !== b.averageItemClassificationDiversity){
+            return a.averageItemClassificationDiversity - b.averageItemClassificationDiversity;
+        }
+        return a.strategyId.localeCompare(b.strategyId);
+    });
+
+    const modelPerformances: AggregatedClassificationModelPerformance[] = []; 
+
+    return {
+        modelsProcessed,
+        overallModelCount: modelsProcessed.length,
+        totalUniqueItemsAnalysed,
+        totalAmbiguousItemsInSet,
+        totalControlItemsInSet,
+        totalUniqueStrategiesAnalysed: uniqueStrategies.size,
+        itemsSummary: [],
+        modelOverallStats,
+        topSensitiveItems,
+        strategyStats, 
+        modelPerformances
+    };
+} 

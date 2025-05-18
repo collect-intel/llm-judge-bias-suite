@@ -5,6 +5,9 @@ interface AggregatedScoringDisplayProps {
   data: AggregatedScoringOverallSummary | null;
 }
 
+const STD_DEV_HIGHLIGHT_THRESHOLD_MEDIUM = 1.0;
+const STD_DEV_HIGHLIGHT_THRESHOLD_HIGH = 1.5;
+
 const AggregatedScoringDisplay: React.FC<AggregatedScoringDisplayProps> = ({ data }) => {
   if (!data || data.variantsSummaries.length === 0) {
     return <p className='text-gray-600 p-4 text-center'>No aggregated scoring data to display or insufficient models/variants processed.</p>;
@@ -19,6 +22,12 @@ const AggregatedScoringDisplay: React.FC<AggregatedScoringDisplayProps> = ({ dat
         <p className='text-sm text-slate-600 text-center mt-1'>
           (Overall Models: {data.overallModelCount} | Overall Unique Items Scored: {data.overallUniqueItemsScored})
         </p>
+        <div className='text-xs text-slate-500 text-center mt-2'>
+          {/* Explanation for StdDev highlighting */}
+          <span>StdDev Highlighting: </span>
+          <span className='mx-1 px-1.5 py-0.5 rounded bg-yellow-200 text-yellow-800'>Medium Disagreement (&gt;{STD_DEV_HIGHLIGHT_THRESHOLD_MEDIUM.toFixed(1)})</span>
+          <span className='ml-1 px-1.5 py-0.5 rounded bg-orange-300 text-orange-800'>High Disagreement (&gt;{STD_DEV_HIGHLIGHT_THRESHOLD_HIGH.toFixed(1)})</span>
+        </div>
       </header>
 
       <div className='space-y-8'>
@@ -38,7 +47,7 @@ const AggregatedScoringDisplay: React.FC<AggregatedScoringDisplayProps> = ({ dat
               {variantItem.variantConfig?.criterion_override && 
                 <p className='text-xs text-gray-500 mt-1'>Criterion: <em className='text-gray-600'>{variantItem.variantConfig.criterion_override}</em></p>}
               {variantItem.variantConfig?.scale_type && 
-                <p className='text-xs text-gray-500 mt-1'>Scale: <em className='text-gray-600'>{variantItem.variantConfig.scale_type}</em></p>}
+                <p className='text-xs text-gray-500 mt-1'>Scale: <em className='text-gray-600'>{variantItem.variantConfig.scale_type} (Normalized to 1-5)</em></p>}
             </header>
 
             {variantItem.itemsAggregatedStats.length > 0 ? (
@@ -54,22 +63,32 @@ const AggregatedScoringDisplay: React.FC<AggregatedScoringDisplayProps> = ({ dat
                     </tr>
                   </thead>
                   <tbody className='bg-white divide-y divide-gray-200'>
-                    {variantItem.itemsAggregatedStats.map((itemStat, itemIndex) => (
-                      <tr key={itemIndex} className='hover:bg-gray-50'>
-                        <td className='px-3 py-2 whitespace-nowrap'>
-                          <div className='font-medium text-gray-900'>{itemStat.item_title || itemStat.item_id}</div>
-                          <div className='text-gray-500 truncate max-w-xs' title={itemStat.item_text_snippet}>{itemStat.item_text_snippet}</div>
-                        </td>
-                        <td className='px-3 py-2 whitespace-nowrap text-gray-700'>{itemStat.dataset_name}</td>
-                        <td className='px-3 py-2 whitespace-nowrap text-center text-gray-700'>{itemStat.modelCount}</td>
-                        <td className='px-3 py-2 whitespace-nowrap text-center font-semibold text-gray-800'>
-                          {itemStat.averageNormalizedScore?.toFixed(2) ?? 'N/A'}
-                        </td>
-                        <td className='px-3 py-2 whitespace-nowrap text-center text-gray-700'>
-                          {itemStat.stdDevNormalizedScore?.toFixed(2) ?? 'N/A'}
-                        </td>
-                      </tr>
-                    ))}
+                    {variantItem.itemsAggregatedStats.map((itemStat, itemIndex) => {
+                      let stdDevCellClass = 'text-gray-700';
+                      if (itemStat.stdDevNormalizedScore !== null && itemStat.stdDevNormalizedScore !== undefined) {
+                        if (itemStat.stdDevNormalizedScore > STD_DEV_HIGHLIGHT_THRESHOLD_HIGH) {
+                          stdDevCellClass = 'font-bold bg-orange-100 text-orange-700';
+                        } else if (itemStat.stdDevNormalizedScore > STD_DEV_HIGHLIGHT_THRESHOLD_MEDIUM) {
+                          stdDevCellClass = 'font-semibold bg-yellow-100 text-yellow-700';
+                        }
+                      }
+                      return (
+                        <tr key={itemIndex} className='hover:bg-gray-50'>
+                          <td className='px-3 py-2 whitespace-nowrap'>
+                            <div className='font-medium text-gray-900'>{itemStat.item_title || itemStat.item_id}</div>
+                            <div className='text-gray-500 truncate max-w-xs' title={itemStat.item_text_snippet}>{itemStat.item_text_snippet}</div>
+                          </td>
+                          <td className='px-3 py-2 whitespace-nowrap text-gray-700'>{itemStat.dataset_name}</td>
+                          <td className='px-3 py-2 whitespace-nowrap text-center text-gray-700'>{itemStat.modelCount}</td>
+                          <td className='px-3 py-2 whitespace-nowrap text-center font-semibold text-gray-800'>
+                            {itemStat.averageNormalizedScore?.toFixed(2) ?? 'N/A'}
+                          </td>
+                          <td className={`px-3 py-2 whitespace-nowrap text-center ${stdDevCellClass}`}>
+                            {itemStat.stdDevNormalizedScore?.toFixed(2) ?? 'N/A'}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

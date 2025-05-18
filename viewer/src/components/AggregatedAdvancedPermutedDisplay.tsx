@@ -10,6 +10,78 @@ interface Props {
   data: AggregatedAdvancedPermutedOverallSummary;
 }
 
+// Helper function to generate textual insights
+const generateSummaryInsights = (data: AggregatedAdvancedPermutedOverallSummary): string[] => {
+  const insights: string[] = [];
+  if (!data || !data.itemSummaries || data.itemSummaries.length === 0) {
+    return ["No data to generate insights."];
+  }
+
+  let maxDelta = 0;
+  let criterionWithMaxDelta = '';
+  let itemWithMaxDelta = '';
+  let orderPairForMaxDelta: [string, string] = ['', ''];
+
+  let overallOrderTendencies: Record<string, { totalDelta: number, count: number, criteriaAffected: Set<string> }> = {};
+
+  for (const itemSummary of data.itemSummaries) {
+    for (const criterionComp of itemSummary.criteriaComparisons) {
+      const originalOrder = criterionComp.scoresByOrder.find(o => o.orderName.toLowerCase().includes('original'));
+      const otherOrders = criterionComp.scoresByOrder.filter(o => !originalOrder || o.orderName !== originalOrder.orderName);
+
+      if (originalOrder && typeof originalOrder.averageScore === 'number') {
+        for (const otherOrder of otherOrders) {
+          if (typeof otherOrder.averageScore === 'number') {
+            const delta = otherOrder.averageScore - originalOrder.averageScore;
+            const absDelta = Math.abs(delta);
+
+            if (absDelta > Math.abs(maxDelta)) {
+              maxDelta = delta;
+              criterionWithMaxDelta = criterionComp.criterionName;
+              itemWithMaxDelta = itemSummary.itemTitle || itemSummary.itemId;
+              orderPairForMaxDelta = [originalOrder.orderName, otherOrder.orderName];
+            }
+
+            const orderKey = `${otherOrder.orderName} vs ${originalOrder.orderName}`;
+            if (!overallOrderTendencies[orderKey]) {
+              overallOrderTendencies[orderKey] = { totalDelta: 0, count: 0, criteriaAffected: new Set() };
+            }
+            overallOrderTendencies[orderKey].totalDelta += delta;
+            overallOrderTendencies[orderKey].count++;
+            overallOrderTendencies[orderKey].criteriaAffected.add(criterionComp.criterionName);
+          }
+        }
+      }
+    }
+  }
+
+  if (criterionWithMaxDelta) {
+    insights.push(
+      `The largest average score change observed was for criterion '${criterionWithMaxDelta}' in item '${itemWithMaxDelta}', with a delta of ${maxDelta.toFixed(2)} when comparing '${orderPairForMaxDelta[1]}' to '${orderPairForMaxDelta[0]}'.`
+    );
+  } else {
+    insights.push("No significant score changes due to order permutation were identified across items and criteria.")
+  }
+
+  for (const [orderComparison, stats] of Object.entries(overallOrderTendencies)) {
+    if (stats.count > 0) {
+      const avgDelta = stats.totalDelta / stats.count;
+      const affectedCriteriaList = Array.from(stats.criteriaAffected).slice(0, 3).join(', ');
+      const moreOrLess = avgDelta > 0 ? "higher" : "lower";
+      insights.push(
+        `On average, scores tended to be ${Math.abs(avgDelta).toFixed(2)} points ${moreOrLess} when using '${orderComparison.split(' vs ')[0]}' compared to '${orderComparison.split(' vs ')[1]}', affecting criteria like ${affectedCriteriaList}${stats.criteriaAffected.size > 3 ? ' and others' : ''} (based on ${stats.count} comparisons across items).`
+      );
+    }
+  }
+  
+  if (insights.length === 1 && insights[0].startsWith("No significant score changes")) { // if only the default "no significant changes" message is there
+      insights.push("Detailed per-item analysis below may still reveal model-specific or item-specific trends.");
+  }
+
+
+  return insights;
+};
+
 const AggregatedAdvancedPermutedDisplay: React.FC<Props> = ({ data }) => {
   if (!data || !data.itemSummaries || data.itemSummaries.length === 0) {
     return (
@@ -26,8 +98,22 @@ const AggregatedAdvancedPermutedDisplay: React.FC<Props> = ({ data }) => {
     return { originalOrder, otherOrders };
   };
 
+  const summaryInsights = generateSummaryInsights(data); // Generate insights
+
   return (
     <div className="space-y-6">
+      {/* Display Summary Insights */}
+      {summaryInsights && summaryInsights.length > 0 && (
+        <div className="mb-6 p-4 border border-indigo-200 rounded-lg bg-indigo-50 shadow">
+          <h4 className="text-md font-semibold text-indigo-700 mb-2">Aggregated Insights (Permuted Order - Task: {data.taskName}):</h4>
+          <ul className="list-disc pl-5 space-y-1 text-sm text-indigo-800">
+            {summaryInsights.map((insight, index) => (
+              <li key={index}>{insight}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {data.itemSummaries.map((itemSummary: AggregatedPermutedItemSummary) => (
         <div key={itemSummary.itemId} className="p-4 border rounded-lg shadow-md bg-white">
           <h3 className="text-lg font-semibold text-gray-800 mb-3">

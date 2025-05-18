@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { PairwiseEloExperimentDataWrapper, EloItemVariantSummary } from '@/types/pairwiseEloExperiment';
+import { calculateCrossoverScoreForEloSet } from '@/utils/eloCrossoverCalculator';
 
 // Import Chart.js and react-chartjs-2
 import {
@@ -209,6 +210,10 @@ const PairwiseEloViewer: React.FC<PairwiseEloViewerProps> = ({ data, modelName }
     }
   };
 
+  // --- Calculate Crossover Score using the utility function ---
+  const crossoverScore = calculateCrossoverScoreForEloSet(data);
+  // --- End Calculate Crossover Score ---
+
   return (
     <div className="bg-slate-50 p-3 rounded">
       <h3 className="text-lg font-semibold text-slate-700 mb-1">
@@ -283,9 +288,31 @@ const PairwiseEloViewer: React.FC<PairwiseEloViewerProps> = ({ data, modelName }
       {/* Bump Chart Section */}
       {transformedData.length > 0 && uniqueVariantNames.length > 1 && (
         <div className="mt-8 pt-4 border-t border-slate-200">
-          <h4 className="text-md font-semibold text-slate-700 mb-3 text-center">
-            Rank Fluctuation Bump Chart
+          <h4 className="text-md font-semibold text-slate-700 mb-1 text-center">
+            Item Rank Fluctuation Across Prompt Variants
           </h4>
+          <p className="text-center text-sm text-slate-600 mb-1">
+            Heuristic Crossover Score: <span className="font-bold text-indigo-600">{crossoverScore === undefined ? 'N/A' : crossoverScore}</span>
+          </p>
+          <p className="text-center text-xs text-slate-500 mb-3 italic">
+            (Counts rank order changes between adjacent variants. Higher score = more sensitivity to prompt phrasing.)
+          </p>
+          <div className="mb-4 p-3 bg-indigo-50 border border-indigo-200 rounded-md text-sm text-indigo-700">
+            <p className="font-semibold mb-1">Interpreting this Bump Chart:</p>
+            <ul className="list-disc list-inside ml-2 space-y-1">
+              <li>Each colored line represents a unique item being ranked. The vertical axis shows the item's rank (Rank 1 is best), and the horizontal axis shows the different ELO prompt variants used.</li>
+              <li><strong>Ideal Consistency:</strong> If the LLM were perfectly consistent and uninfluenced by prompt phrasing, all lines would be horizontal and parallel. An item's rank would remain constant across all variants.</li>
+              <li><strong>Detecting Inconsistency/Bias:</strong>
+                <ul className="list-disc list-inside ml-4 mt-1 space-y-0.5 text-indigo-600">
+                  <li><span className="font-medium">Crossing Lines:</span> Indicate that the relative order of items changes depending on the prompt. This is a strong visual indicator of the prompt variant affecting the LLM's judgment.</li>
+                  <li><span className="font-medium">Steep Line Angles:</span> Show a large change in an item's rank between two variants.</li>
+                  <li><span className="font-medium">"Tangled" Appearance:</span> Generally, the more lines cross and the more varied their paths, the greater the influence of prompt phrasing on the ranking outcome for this set of items and criterion.</li>
+                </ul>
+              </li>
+              <li>This chart helps visualize how sensitive the model's comparative judgments are to the way questions are asked.</li>
+              <li>A higher <strong>Crossover Score</strong> (shown above) suggests more instances where item rankings change order between adjacent prompt variants. This can be an indicator of greater sensitivity to prompt phrasing or inconsistencies in judgment.</li>
+            </ul>
+          </div>
           <div className="relative h-[500px] w-full md:h-[600px]"> {/* Responsive height example */}
             <Line options={bumpChartOptions} data={bumpChartData} />
           </div>

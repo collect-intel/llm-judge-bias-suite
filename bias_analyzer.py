@@ -12,6 +12,7 @@ from experiment_runners.scoring_experiments import run_scoring_experiment
 from experiment_runners.pairwise_elo_experiment import run_pairwise_elo_experiment
 from experiment_runners.multi_criteria_scoring_experiment import run_multi_criteria_experiment
 from experiment_runners.advanced_multi_criteria_experiment import run_permuted_order_multi_criteria_experiment, run_isolated_criterion_scoring_experiment
+from experiment_runners.classification_experiment import run_classification_experiment
 # from bias_suite.experiment_runners.scoring_experiments import run_poem_scoring_experiment # Assuming you'll move it
 
 # Import shared config and functions
@@ -22,7 +23,10 @@ from test_data import (
     SHORT_ARGUMENTS_FOR_SCORING,
     ARGUMENT_EVALUATION_RUBRIC,
     STORY_OPENINGS_FOR_SCORING,
-    STORY_OPENING_EVALUATION_RUBRIC
+    STORY_OPENING_EVALUATION_RUBRIC,
+    CLASSIFICATION_ITEMS,
+    CLASSIFICATION_CATEGORIES,
+    PROMPT_VARIANT_STRATEGIES
 )
 
 # --- Configuration (now minimal, mostly handled in config_utils) ---
@@ -39,7 +43,7 @@ def main():
     parser.add_argument(
         "experiment",
         type=str,
-        choices=["picking", "scoring", "pairwise_elo", "multi_criteria", "adv_multi_criteria_permuted", "adv_multi_criteria_isolated", "all"],
+        choices=["picking", "scoring", "pairwise_elo", "multi_criteria", "adv_multi_criteria_permuted", "adv_multi_criteria_isolated", "classification", "all"],
         help="Which experiment to run"
     )
     parser.add_argument(
@@ -95,6 +99,24 @@ def main():
         default=None,
         help="Number of pairs for picking experiment."
     )
+    parser.add_argument(
+        "--classification_num_samples",
+        type=int,
+        default=0,
+        help="Number of items for classification experiment (0 for all)."
+    )
+    parser.add_argument(
+        "--classification_domain_filter",
+        type=str,
+        default="all",
+        help="Filter classification strategies by domain_target (e.g., 'user_feedback_v1'). 'all' runs all relevant strategies."
+    )
+    parser.add_argument(
+        "--temp",
+        type=float,
+        default=0.1, # Default temperature
+        help="Temperature for LLM calls. Default is 0.1. This will be used for API calls and reflected in the output filename."
+    )
     args = parser.parse_args()
 
     load_dotenv() 
@@ -130,7 +152,7 @@ def main():
         os.makedirs(os.path.dirname(filepath_with_ext), exist_ok=True)
 
         with open(filepath_with_ext, 'w') as output_file:
-            json.dump(data_object, output_file, indent=2)
+            json.dump(data_object, output_file, indent=2, default=str)
         print(f"Results saved to {filepath_with_ext}")
 
     def run_for_model(model_name_to_run):
@@ -138,6 +160,14 @@ def main():
         print(f"\n================== MODEL: {model_name_to_run} ==================")
         
         model_name_slug = re.sub(r'[^a-zA-Z0-9_.-]', '_', model_name_to_run)
+        # Generate temperature suffix, e.g., 0.1 -> _temp01, 0.35 -> _temp035, 1.0 -> _temp10
+        temp_str = str(args.temp)
+        if '.' in temp_str:
+            temp_suffix = f"_temp{temp_str.replace('.', '')}"
+        else:
+            temp_suffix = f"_temp{temp_str}0" # append 0 if it's a whole number like 1.0 -> 1 -> _temp10
+        
+        rep_suffix = f"_rep{args.repetitions}"
         
         results_data = None
         current_experiment_type_for_filename = args.experiment # Default, override below
@@ -155,9 +185,11 @@ def main():
         if args.experiment == "picking":
             current_experiment_type_for_filename = "picking"
             results_data = run_positional_bias_picking_experiment(
+                model_to_run_experiment_with=model_name_to_run, 
                 quiet=quiet, 
                 repetitions=args.repetitions,
-                num_pairs_to_test=args.num_picking_pairs
+                num_pairs_to_test=args.num_picking_pairs,
+                temperature=args.temp # Pass temperature
             )
             # The `results_data` from picking experiment should now be a list of variant dicts,
             # where each dict contains a 'pairs_summary' list of pair dicts.
@@ -169,12 +201,18 @@ def main():
                 quiet=quiet, 
                 num_samples=args.scoring_samples, 
                 repetitions=args.repetitions,
-                scoring_type=args.scoring_type
+                scoring_type=args.scoring_type,
+                temperature=args.temp # Pass temperature
             )
 
         elif args.experiment == "pairwise_elo":
             current_experiment_type_for_filename = "pairwise_elo"
-            results_data = run_pairwise_elo_experiment(show_raw=args.raw, quiet=quiet, repetitions=args.repetitions)
+            results_data = run_pairwise_elo_experiment(
+                show_raw=args.raw, 
+                quiet=quiet, 
+                repetitions=args.repetitions,
+                temperature=args.temp # Pass temperature
+            )
 
         elif args.experiment == "multi_criteria":
             current_experiment_type_for_filename = f"multi_criteria_{args.task}"
@@ -186,7 +224,8 @@ def main():
                 show_raw=args.raw,
                 quiet=quiet,
                 num_samples=args.scoring_samples,
-                repetitions=args.repetitions
+                repetitions=args.repetitions,
+                temperature=args.temp # Pass temperature
             )
 
         elif args.experiment == "adv_multi_criteria_permuted":
@@ -199,7 +238,8 @@ def main():
                 show_raw=args.raw,
                 quiet=quiet,
                 num_samples=args.scoring_samples,
-                repetitions=args.repetitions
+                repetitions=args.repetitions,
+                temperature=args.temp # Pass temperature
             )
 
         elif args.experiment == "adv_multi_criteria_isolated":
@@ -207,7 +247,7 @@ def main():
             task_data, task_rubric = load_multi_criteria_task_data(args.task)
             permuted_data_for_isolated = None # Logic to load this remains if needed, but now loads JSON
             if args.output_dir:
-                 perm_json_path = os.path.join(args.output_dir, f"adv_multi_criteria_permuted_{args.task}_results_{model_name_slug}.json") # Expect .json
+                 perm_json_path = os.path.join(args.output_dir, f"adv_multi_criteria_permuted_{args.task}_results_{model_name_slug}{temp_suffix}.json") # Expect .json, add temp_suffix
                  if os.path.exists(perm_json_path):
                     try:
                         with open(perm_json_path, 'r') as f_perm:
@@ -224,37 +264,64 @@ def main():
                 quiet=quiet,
                 num_samples=args.scoring_samples,
                 repetitions=args.repetitions,
-                holistic_comparison_data=permuted_data_for_isolated
+                holistic_comparison_data=permuted_data_for_isolated,
+                temperature=args.temp # Pass temperature
             )
+
+        elif args.experiment == "classification":
+            current_experiment_type_for_filename = "classification"
+            
+            strategies_to_run = PROMPT_VARIANT_STRATEGIES
+            if args.classification_domain_filter != "all":
+                strategies_to_run = [
+                    s for s in PROMPT_VARIANT_STRATEGIES 
+                    if s.get("domain_target") == args.classification_domain_filter
+                ]
+                if not quiet:
+                    print(f"Filtered to {len(strategies_to_run)} strategies for domain: {args.classification_domain_filter}")
+            if not strategies_to_run:
+                print(f"Warning: No classification strategies found for domain filter '{args.classification_domain_filter}'. Skipping classification experiment.")
+                results_data = []
+            else:
+                results_data = run_classification_experiment(
+                    classification_items=CLASSIFICATION_ITEMS,
+                    category_sets=CLASSIFICATION_CATEGORIES,
+                    prompt_variant_strategies=strategies_to_run,
+                    show_raw=args.raw,
+                    quiet=quiet,
+                    num_samples=args.classification_num_samples,
+                    repetitions=args.repetitions,
+                    temperature=args.temp # Pass temperature
+                )
 
         elif args.experiment == "all":
             experiments_to_execute = [
                 ("PICKING EXPERIMENT", lambda: (
-                    run_positional_bias_picking_experiment(quiet=quiet, repetitions=args.repetitions, num_pairs_to_test=args.num_picking_pairs), 
+                    run_positional_bias_picking_experiment(model_to_run_experiment_with=model_name_to_run, quiet=quiet, repetitions=args.repetitions, num_pairs_to_test=args.num_picking_pairs, temperature=args.temp), 
                     "picking"
                 )),
                 ("SCORING EXPERIMENT", lambda: (
-                    run_scoring_experiment(show_raw=args.raw, quiet=quiet, num_samples=args.scoring_samples, repetitions=args.repetitions, scoring_type=args.scoring_type), 
+                    run_scoring_experiment(show_raw=args.raw, quiet=quiet, num_samples=args.scoring_samples, repetitions=args.repetitions, scoring_type=args.scoring_type, temperature=args.temp), 
                     "scoring"
                 )),
                 ("PAIRWISE ELO EXPERIMENT", lambda: (
-                    run_pairwise_elo_experiment(show_raw=args.raw, quiet=quiet, repetitions=args.repetitions),
+                    run_pairwise_elo_experiment(show_raw=args.raw, quiet=quiet, repetitions=args.repetitions, temperature=args.temp),
                     "pairwise_elo"
                 )),
                 ("MULTI_CRITERIA (Argument)", lambda: (
-                    run_multi_criteria_experiment(data_list=SHORT_ARGUMENTS_FOR_SCORING, rubric_dict=ARGUMENT_EVALUATION_RUBRIC, task_name="Argument", show_raw=args.raw, quiet=quiet, num_samples=args.scoring_samples, repetitions=args.repetitions), 
+                    run_multi_criteria_experiment(data_list=SHORT_ARGUMENTS_FOR_SCORING, rubric_dict=ARGUMENT_EVALUATION_RUBRIC, task_name="Argument", show_raw=args.raw, quiet=quiet, num_samples=args.scoring_samples, repetitions=args.repetitions, temperature=args.temp), 
                     "multi_criteria_argument"
                 )),
                 ("MULTI_CRITERIA (Story Opening)", lambda: (
-                    run_multi_criteria_experiment(data_list=STORY_OPENINGS_FOR_SCORING, rubric_dict=STORY_OPENING_EVALUATION_RUBRIC, task_name="StoryOpening", show_raw=args.raw, quiet=quiet, num_samples=args.scoring_samples, repetitions=args.repetitions),
+                    run_multi_criteria_experiment(data_list=STORY_OPENINGS_FOR_SCORING, rubric_dict=STORY_OPENING_EVALUATION_RUBRIC, task_name="StoryOpening", show_raw=args.raw, quiet=quiet, num_samples=args.scoring_samples, repetitions=args.repetitions, temperature=args.temp),
                     "multi_criteria_story_opening"
                 )),
                 ("ADVANCED: PERMUTED ORDER (Argument)", lambda: (
-                    run_permuted_order_multi_criteria_experiment(data_list=SHORT_ARGUMENTS_FOR_SCORING, rubric_dict=ARGUMENT_EVALUATION_RUBRIC, task_name="Argument", show_raw=args.raw, quiet=quiet, num_samples=args.scoring_samples, repetitions=args.repetitions), 
+                    run_permuted_order_multi_criteria_experiment(data_list=SHORT_ARGUMENTS_FOR_SCORING, rubric_dict=ARGUMENT_EVALUATION_RUBRIC, task_name="Argument", show_raw=args.raw, quiet=quiet, num_samples=args.scoring_samples, repetitions=args.repetitions, temperature=args.temp), 
                     "adv_multi_criteria_permuted_argument"
                 )),
                  ("ADVANCED: PERMUTED ORDER (Story Opening)", lambda: (
-                    run_permuted_order_multi_criteria_experiment(data_list=STORY_OPENINGS_FOR_SCORING, rubric_dict=STORY_OPENING_EVALUATION_RUBRIC, task_name="StoryOpening", show_raw=args.raw, quiet=quiet, num_samples=args.scoring_samples, repetitions=args.repetitions),
+                    run_permuted_order_multi_criteria_experiment(data_list=STORY_OPENINGS_FOR_SCORING, rubric_dict=STORY_OPENING_EVALUATION_RUBRIC, task_name="StoryOpening", show_raw=args.raw, quiet=quiet, num_samples=args.scoring_samples, repetitions=args.repetitions, temperature=args.temp),
                     "adv_multi_criteria_permuted_story_opening"
                 ))
             ]
@@ -268,7 +335,7 @@ def main():
                     all_permuted_results_temp_store[task_name_from_type] = exp_results
                 
                 if args.output_dir and exp_results:
-                    filename = f"{exp_type_slug}_results_{model_name_slug}.json" # Always .json
+                    filename = f"{exp_type_slug}_results_{model_name_slug}{temp_suffix}{rep_suffix}.json" # Always .json, add temp_suffix and rep_suffix
                     filepath = os.path.join(args.output_dir, filename)
                     write_results_to_json(filepath, exp_results)
 
@@ -281,7 +348,7 @@ def main():
                 exp_type_isolated = f"adv_multi_criteria_isolated_{iso_task_name}"
                 adv_permuted_results_for_isolated = all_permuted_results_temp_store.get(iso_task_name) 
                 if not adv_permuted_results_for_isolated and args.output_dir:
-                    perm_json_path = os.path.join(args.output_dir, f"adv_multi_criteria_permuted_{iso_task_name}_results_{model_name_slug}.json")
+                    perm_json_path = os.path.join(args.output_dir, f"adv_multi_criteria_permuted_{iso_task_name}_results_{model_name_slug}{temp_suffix}{rep_suffix}.json") # add temp_suffix and rep_suffix
                     if os.path.exists(perm_json_path):
                         try:
                             with open(perm_json_path, 'r') as f_perm: loaded_data = json.load(f_perm)
@@ -292,12 +359,28 @@ def main():
                 adv_isolated_results = run_isolated_criterion_scoring_experiment(
                     data_list=iso_data, rubric_dict=iso_rubric, task_name=iso_task_name.capitalize(),
                     show_raw=args.raw, quiet=quiet, num_samples=args.scoring_samples, repetitions=args.repetitions, 
-                    holistic_comparison_data=adv_permuted_results_for_isolated
+                    holistic_comparison_data=adv_permuted_results_for_isolated,
+                    temperature=args.temp # Pass temperature
                 )
                 if args.output_dir and adv_isolated_results:
-                    filepath = os.path.join(args.output_dir, f"{exp_type_isolated}_results_{model_name_slug}.json")
+                    filepath = os.path.join(args.output_dir, f"{exp_type_isolated}_results_{model_name_slug}{temp_suffix}{rep_suffix}.json") # add temp_suffix and rep_suffix
                     write_results_to_json(filepath, adv_isolated_results)
             
+            classification_strategies_for_all = PROMPT_VARIANT_STRATEGIES
+            classification_results_all = run_classification_experiment(
+                classification_items=CLASSIFICATION_ITEMS,
+                category_sets=CLASSIFICATION_CATEGORIES,
+                prompt_variant_strategies=classification_strategies_for_all,
+                show_raw=args.raw,
+                quiet=quiet,
+                num_samples=args.classification_num_samples,
+                repetitions=args.repetitions,
+                temperature=args.temp # Pass temperature
+            )
+            if args.output_dir and classification_results_all:
+                filename_class_all = f"classification_results_{model_name_slug}{temp_suffix}{rep_suffix}.json" # add temp_suffix and rep_suffix
+                filepath_class_all = os.path.join(args.output_dir, filename_class_all)
+                write_results_to_json(filepath_class_all, classification_results_all)
             return 
         else: 
             print(f"Unknown experiment: {args.experiment}")
@@ -305,7 +388,7 @@ def main():
             exit(1)
         
         if args.output_dir and results_data is not None:
-            filename = f"{current_experiment_type_for_filename}_results_{model_name_slug}.{output_extension}" # .json
+            filename = f"{current_experiment_type_for_filename}_results_{model_name_slug}{temp_suffix}{rep_suffix}.{output_extension}" # .json, add temp_suffix and rep_suffix
             filepath = os.path.join(args.output_dir, filename)
             write_results_to_json(filepath, results_data)
 

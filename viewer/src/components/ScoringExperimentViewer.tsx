@@ -39,6 +39,29 @@ const formatStat = (value: number | null | undefined): string => {
   return value.toFixed(2);
 };
 
+// Helper function to get cell class names for highlighting
+const getStatCellClass = (metricKey: keyof ScoringVariantAggregateStats, value: number | null | undefined): string => {
+  let className = "px-4 py-2";
+  if (value === null || typeof value === 'undefined') return className;
+
+  switch (metricKey) {
+    case 'std_dev_normalized_score_overall':
+      if (value > 1.5) className += ' bg-red-200';
+      else if (value > 1.0) className += ' bg-yellow-200';
+      break;
+    case 'iqr_normalized_score_overall':
+      if (value > 2.5) className += ' bg-red-200';
+      else if (value > 2.0) className += ' bg-yellow-200';
+      break;
+    case 'total_errors_in_runs':
+      if (value > 0) className += ' bg-orange-200'; // Using orange for errors
+      break;
+    default:
+      break;
+  }
+  return className;
+};
+
 const ScoringExperimentViewer: React.FC<ScoringExperimentViewerProps> = ({ data, modelName }) => {
   const [selectedDataSource, setSelectedDataSource] = useState<string | null>(null);
 
@@ -207,7 +230,7 @@ const ScoringExperimentViewer: React.FC<ScoringExperimentViewerProps> = ({ data,
                     <td className="px-4 py-2 font-medium whitespace-nowrap">
                       {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())} 
                     </td>
-                    <td className="px-4 py-2">
+                    <td className={getStatCellClass(key, variantResult.aggregate_stats[key])}>
                       {formatStat(variantResult.aggregate_stats[key])}
                     </td>
                   </tr>

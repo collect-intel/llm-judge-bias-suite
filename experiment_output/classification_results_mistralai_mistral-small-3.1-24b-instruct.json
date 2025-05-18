@@ -1,0 +1,522 @@
+[
+  {
+    "item_id": "uf_002_clear_bug",
+    "prompt_variant_id": "UF_Order_BFGQ_NuancedDefs_StdTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BFGQ_NuancedDefs_StdTemplate",
+      "description": "User Feedback: Order Bug, Feature, General, Question; Nuanced Definitions ON.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Please classify the following user feedback into one of the categories listed below using the provided definitions. Provide only the category name as your answer.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request",
+        "general_comment",
+        "question"
+      ],
+      "include_definitions": true,
+      "definition_nuance_domain_id": "user_feedback_v1_defs_nuance_A"
+    },
+    "llm_classifications_raw": [
+      "Bug Report"
+    ],
+    "parsed_classifications": [
+      "Bug Report"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_002_clear_bug",
+    "prompt_variant_id": "UF_Order_BF_WithEscape_DefsOn_DetailListTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BF_WithEscape_DefsOn_DetailListTemplate",
+      "description": "User Feedback: Order Bug, Feature with 'Other' escape; Definitions ON. Detailed List Template.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Review the text and select the best category from the list. Provide only the category name.\n\nCategories:\n{category_section_detailed_list}\nText: ```{item_text}```\n\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request"
+      ],
+      "include_definitions": true,
+      "escape_hatch_config": {
+        "id": "uf_other_escape",
+        "name": "Other/Cannot Classify",
+        "description": "Use if the feedback doesn't clearly fit Bug Report or Feature Request, or is unclear."
+      }
+    },
+    "llm_classifications_raw": [
+      "Bug Report"
+    ],
+    "parsed_classifications": [
+      "Bug Report"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_001_ambiguous_bug_feature",
+    "prompt_variant_id": "UF_Order_BF_WithEscape_DefsOn_DetailListTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BF_WithEscape_DefsOn_DetailListTemplate",
+      "description": "User Feedback: Order Bug, Feature with 'Other' escape; Definitions ON. Detailed List Template.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Review the text and select the best category from the list. Provide only the category name.\n\nCategories:\n{category_section_detailed_list}\nText: ```{item_text}```\n\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request"
+      ],
+      "include_definitions": true,
+      "escape_hatch_config": {
+        "id": "uf_other_escape",
+        "name": "Other/Cannot Classify",
+        "description": "Use if the feedback doesn't clearly fit Bug Report or Feature Request, or is unclear."
+      }
+    },
+    "llm_classifications_raw": [
+      "Bug Report"
+    ],
+    "parsed_classifications": [
+      "Bug Report"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_001_ambiguous_bug_feature",
+    "prompt_variant_id": "UF_Order_QGFB_DefsOff_AltTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_QGFB_DefsOff_AltTemplate",
+      "description": "User Feedback: Order Question, General, Feature, Bug; Definitions OFF. Alt template.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Categories: {category_list_comma_separated}. Text: ```{item_text}```. Your Choice (Name Only):",
+      "category_order": [
+        "question",
+        "general_comment",
+        "feature_request",
+        "bug"
+      ],
+      "include_definitions": false
+    },
+    "llm_classifications_raw": [
+      "Bug Report"
+    ],
+    "parsed_classifications": [
+      "Bug Report"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_001_ambiguous_bug_feature",
+    "prompt_variant_id": "UF_Order_BFGQ_DefsOn_StdTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BFGQ_DefsOn_StdTemplate",
+      "description": "User Feedback: Order Bug, Feature, General, Question; Definitions ON.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Please classify the following user feedback into one of the categories listed below. Provide only the category name as your answer.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request",
+        "general_comment",
+        "question"
+      ],
+      "include_definitions": true
+    },
+    "llm_classifications_raw": [
+      "Bug Report"
+    ],
+    "parsed_classifications": [
+      "Bug Report"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_001_ambiguous_bug_feature",
+    "prompt_variant_id": "UF_Order_BFGQ_NuancedDefs_StdTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BFGQ_NuancedDefs_StdTemplate",
+      "description": "User Feedback: Order Bug, Feature, General, Question; Nuanced Definitions ON.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Please classify the following user feedback into one of the categories listed below using the provided definitions. Provide only the category name as your answer.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request",
+        "general_comment",
+        "question"
+      ],
+      "include_definitions": true,
+      "definition_nuance_domain_id": "user_feedback_v1_defs_nuance_A"
+    },
+    "llm_classifications_raw": [
+      "Feature Request"
+    ],
+    "parsed_classifications": [
+      "Feature Request"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_002_clear_bug",
+    "prompt_variant_id": "UF_Order_QGFB_DefsOff_AltTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_QGFB_DefsOff_AltTemplate",
+      "description": "User Feedback: Order Question, General, Feature, Bug; Definitions OFF. Alt template.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Categories: {category_list_comma_separated}. Text: ```{item_text}```. Your Choice (Name Only):",
+      "category_order": [
+        "question",
+        "general_comment",
+        "feature_request",
+        "bug"
+      ],
+      "include_definitions": false
+    },
+    "llm_classifications_raw": [
+      "Bug Report"
+    ],
+    "parsed_classifications": [
+      "Bug Report"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_002_clear_bug",
+    "prompt_variant_id": "UF_Order_BFGQ_DefsOn_StdTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BFGQ_DefsOn_StdTemplate",
+      "description": "User Feedback: Order Bug, Feature, General, Question; Definitions ON.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Please classify the following user feedback into one of the categories listed below. Provide only the category name as your answer.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request",
+        "general_comment",
+        "question"
+      ],
+      "include_definitions": true
+    },
+    "llm_classifications_raw": [
+      "Bug Report"
+    ],
+    "parsed_classifications": [
+      "Bug Report"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_003_clear_feature_request",
+    "prompt_variant_id": "UF_Order_BFGQ_DefsOn_StdTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BFGQ_DefsOn_StdTemplate",
+      "description": "User Feedback: Order Bug, Feature, General, Question; Definitions ON.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Please classify the following user feedback into one of the categories listed below. Provide only the category name as your answer.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request",
+        "general_comment",
+        "question"
+      ],
+      "include_definitions": true
+    },
+    "llm_classifications_raw": [
+      "Feature Request"
+    ],
+    "parsed_classifications": [
+      "Feature Request"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_003_clear_feature_request",
+    "prompt_variant_id": "UF_Order_QGFB_DefsOff_AltTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_QGFB_DefsOff_AltTemplate",
+      "description": "User Feedback: Order Question, General, Feature, Bug; Definitions OFF. Alt template.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Categories: {category_list_comma_separated}. Text: ```{item_text}```. Your Choice (Name Only):",
+      "category_order": [
+        "question",
+        "general_comment",
+        "feature_request",
+        "bug"
+      ],
+      "include_definitions": false
+    },
+    "llm_classifications_raw": [
+      "Feature Request"
+    ],
+    "parsed_classifications": [
+      "Feature Request"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_004_question",
+    "prompt_variant_id": "UF_Order_QGFB_DefsOff_AltTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_QGFB_DefsOff_AltTemplate",
+      "description": "User Feedback: Order Question, General, Feature, Bug; Definitions OFF. Alt template.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Categories: {category_list_comma_separated}. Text: ```{item_text}```. Your Choice (Name Only):",
+      "category_order": [
+        "question",
+        "general_comment",
+        "feature_request",
+        "bug"
+      ],
+      "include_definitions": false
+    },
+    "llm_classifications_raw": [
+      "Question"
+    ],
+    "parsed_classifications": [
+      "Question"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_003_clear_feature_request",
+    "prompt_variant_id": "UF_Order_BFGQ_NuancedDefs_StdTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BFGQ_NuancedDefs_StdTemplate",
+      "description": "User Feedback: Order Bug, Feature, General, Question; Nuanced Definitions ON.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Please classify the following user feedback into one of the categories listed below using the provided definitions. Provide only the category name as your answer.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request",
+        "general_comment",
+        "question"
+      ],
+      "include_definitions": true,
+      "definition_nuance_domain_id": "user_feedback_v1_defs_nuance_A"
+    },
+    "llm_classifications_raw": [
+      "Feature Request"
+    ],
+    "parsed_classifications": [
+      "Feature Request"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_003_clear_feature_request",
+    "prompt_variant_id": "UF_Order_BF_WithEscape_DefsOn_DetailListTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BF_WithEscape_DefsOn_DetailListTemplate",
+      "description": "User Feedback: Order Bug, Feature with 'Other' escape; Definitions ON. Detailed List Template.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Review the text and select the best category from the list. Provide only the category name.\n\nCategories:\n{category_section_detailed_list}\nText: ```{item_text}```\n\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request"
+      ],
+      "include_definitions": true,
+      "escape_hatch_config": {
+        "id": "uf_other_escape",
+        "name": "Other/Cannot Classify",
+        "description": "Use if the feedback doesn't clearly fit Bug Report or Feature Request, or is unclear."
+      }
+    },
+    "llm_classifications_raw": [
+      "Feature Request"
+    ],
+    "parsed_classifications": [
+      "Feature Request"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_004_question",
+    "prompt_variant_id": "UF_Order_BF_WithEscape_DefsOn_DetailListTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BF_WithEscape_DefsOn_DetailListTemplate",
+      "description": "User Feedback: Order Bug, Feature with 'Other' escape; Definitions ON. Detailed List Template.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Review the text and select the best category from the list. Provide only the category name.\n\nCategories:\n{category_section_detailed_list}\nText: ```{item_text}```\n\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request"
+      ],
+      "include_definitions": true,
+      "escape_hatch_config": {
+        "id": "uf_other_escape",
+        "name": "Other/Cannot Classify",
+        "description": "Use if the feedback doesn't clearly fit Bug Report or Feature Request, or is unclear."
+      }
+    },
+    "llm_classifications_raw": [
+      "Other/Cannot Classify"
+    ],
+    "parsed_classifications": [
+      "Other/Cannot Classify"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_004_question",
+    "prompt_variant_id": "UF_Order_BFGQ_NuancedDefs_StdTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BFGQ_NuancedDefs_StdTemplate",
+      "description": "User Feedback: Order Bug, Feature, General, Question; Nuanced Definitions ON.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Please classify the following user feedback into one of the categories listed below using the provided definitions. Provide only the category name as your answer.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request",
+        "general_comment",
+        "question"
+      ],
+      "include_definitions": true,
+      "definition_nuance_domain_id": "user_feedback_v1_defs_nuance_A"
+    },
+    "llm_classifications_raw": [
+      "Question"
+    ],
+    "parsed_classifications": [
+      "Question"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_004_question",
+    "prompt_variant_id": "UF_Order_BFGQ_DefsOn_StdTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BFGQ_DefsOn_StdTemplate",
+      "description": "User Feedback: Order Bug, Feature, General, Question; Definitions ON.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Please classify the following user feedback into one of the categories listed below. Provide only the category name as your answer.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request",
+        "general_comment",
+        "question"
+      ],
+      "include_definitions": true
+    },
+    "llm_classifications_raw": [
+      "Question"
+    ],
+    "parsed_classifications": [
+      "Question"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_005_ambiguous_comment_feature",
+    "prompt_variant_id": "UF_Order_QGFB_DefsOff_AltTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_QGFB_DefsOff_AltTemplate",
+      "description": "User Feedback: Order Question, General, Feature, Bug; Definitions OFF. Alt template.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Categories: {category_list_comma_separated}. Text: ```{item_text}```. Your Choice (Name Only):",
+      "category_order": [
+        "question",
+        "general_comment",
+        "feature_request",
+        "bug"
+      ],
+      "include_definitions": false
+    },
+    "llm_classifications_raw": [
+      "General Comment"
+    ],
+    "parsed_classifications": [
+      "General Comment"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_005_ambiguous_comment_feature",
+    "prompt_variant_id": "UF_Order_BFGQ_DefsOn_StdTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BFGQ_DefsOn_StdTemplate",
+      "description": "User Feedback: Order Bug, Feature, General, Question; Definitions ON.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Please classify the following user feedback into one of the categories listed below. Provide only the category name as your answer.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request",
+        "general_comment",
+        "question"
+      ],
+      "include_definitions": true
+    },
+    "llm_classifications_raw": [
+      "Feature Request"
+    ],
+    "parsed_classifications": [
+      "Feature Request"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_005_ambiguous_comment_feature",
+    "prompt_variant_id": "UF_Order_BF_WithEscape_DefsOn_DetailListTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BF_WithEscape_DefsOn_DetailListTemplate",
+      "description": "User Feedback: Order Bug, Feature with 'Other' escape; Definitions ON. Detailed List Template.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Review the text and select the best category from the list. Provide only the category name.\n\nCategories:\n{category_section_detailed_list}\nText: ```{item_text}```\n\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request"
+      ],
+      "include_definitions": true,
+      "escape_hatch_config": {
+        "id": "uf_other_escape",
+        "name": "Other/Cannot Classify",
+        "description": "Use if the feedback doesn't clearly fit Bug Report or Feature Request, or is unclear."
+      }
+    },
+    "llm_classifications_raw": [
+      "Feature Request"
+    ],
+    "parsed_classifications": [
+      "Feature Request"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  },
+  {
+    "item_id": "uf_005_ambiguous_comment_feature",
+    "prompt_variant_id": "UF_Order_BFGQ_NuancedDefs_StdTemplate",
+    "prompt_variant_details": {
+      "strategy_id": "UF_Order_BFGQ_NuancedDefs_StdTemplate",
+      "description": "User Feedback: Order Bug, Feature, General, Question; Nuanced Definitions ON.",
+      "domain_target": "user_feedback_v1",
+      "base_prompt_template": "Please classify the following user feedback into one of the categories listed below using the provided definitions. Provide only the category name as your answer.\n\nText: ```{item_text}```\n\n{category_definitions_section}\nSelected Category:",
+      "category_order": [
+        "bug",
+        "feature_request",
+        "general_comment",
+        "question"
+      ],
+      "include_definitions": true,
+      "definition_nuance_domain_id": "user_feedback_v1_defs_nuance_A"
+    },
+    "llm_classifications_raw": [
+      "Feature Request"
+    ],
+    "parsed_classifications": [
+      "Feature Request"
+    ],
+    "errors_in_repetitions": 0,
+    "total_repetitions_attempted": 1
+  }
+]

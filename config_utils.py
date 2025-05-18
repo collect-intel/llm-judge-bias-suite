@@ -10,7 +10,7 @@ OPENROUTER_API_KEY = None
 # BIAS_SUITE_LLM_MODEL serves as a fallback default if no model is specified via
 # command-line arguments (--model or --models) or the BIAS_SUITE_LLM_MODEL environment variable in .env.
 # The actual model used by experiments is determined in bias_analyzer.py based on this hierarchy.
-BIAS_SUITE_LLM_MODEL = "mistralai/mistral-small-3.1-24b-instruct"
+BIAS_SUITE_LLM_MODEL = None
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 def set_api_key(key):
@@ -23,8 +23,8 @@ def set_llm_model(model_name):
     if model_name:
         BIAS_SUITE_LLM_MODEL = model_name
 
-def call_openrouter_api(prompt_text, model_name_override=None, quiet=False):
-    """Calls the OpenRouter API with the given prompt and model."""
+def call_openrouter_api(prompt_text, model_name_override=None, quiet=False, temperature=None, system_prompt_text=None):
+    """Calls the OpenRouter API with the given prompt and model, optionally including a system prompt."""
 
     if not OPENROUTER_API_KEY:
         # This case is critical and should be loud if not quiet.
@@ -41,13 +41,26 @@ def call_openrouter_api(prompt_text, model_name_override=None, quiet=False):
         "HTTP-Referer": "http://localhost/bias_suite", 
         "X-Title": "Bias Suite Experiment"
     }
+
+    messages = []
+    if system_prompt_text:
+        messages.append({"role": "system", "content": system_prompt_text})
+    messages.append({"role": "user", "content": prompt_text})
+
     data = {
         "model": actual_model_name,
-        "messages": [{"role": "user", "content": prompt_text}],
+        "messages": messages,
         "max_tokens": 1000, 
-        "temperature": 0.1
+        "temperature": temperature if temperature is not None else 0.1
     }
     
+    # DEBUG: Print the exact payload before sending
+    if not quiet:
+        try:
+            print(f"    [API Call Payload for {actual_model_name}] Attempting to send JSON: {json.dumps(data)}")
+        except Exception as e:
+            print(f"    [API Call Payload for {actual_model_name}] Error trying to dump data to JSON for printing: {e}. Data: {data}")
+
     max_retries = 3
     retry_delay = 5
 

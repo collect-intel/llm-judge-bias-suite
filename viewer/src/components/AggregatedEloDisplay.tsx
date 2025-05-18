@@ -1,11 +1,34 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { AggregatedEloOverallSummary, AggregatedEloVariantSummary, AggregatedEloItemStats } from '@/types/aggregatedPairwiseElo';
+import { calculateAggregatedVariantStability, VariantStabilityRank } from '@/utils/eloStabilityCalculator';
+
+interface ModelCrossoverScoreData {
+  modelName: string;
+  crossoverScore: number;
+}
 
 interface AggregatedEloDisplayProps {
   data: AggregatedEloOverallSummary | null;
+  modelCrossoverScores?: ModelCrossoverScoreData[];
 }
 
-const AggregatedEloDisplay: React.FC<AggregatedEloDisplayProps> = ({ data }) => {
+const AggregatedEloDisplay: React.FC<AggregatedEloDisplayProps> = ({ data, modelCrossoverScores }) => {
+  const stabilityRanking = useMemo(() => {
+    if (!data || !data.variantsSummaries || data.variantsSummaries.length < 2) {
+      return [];
+    }
+    // The calculateAggregatedVariantStability function expects AggregatedEloVariantSummaryMinimal[],
+    // but AggregatedEloVariantSummary from data.variantsSummaries is compatible (it has at least variantName and itemsAggregatedStats)
+    return calculateAggregatedVariantStability(data.variantsSummaries);
+  }, [data]);
+
+  const sortedModelCrossoverRankings = useMemo(() => {
+    if (!modelCrossoverScores || modelCrossoverScores.length === 0) {
+      return [];
+    }
+    return [...modelCrossoverScores].sort((a, b) => a.crossoverScore - b.crossoverScore);
+  }, [modelCrossoverScores]);
+
   if (!data || data.variantsSummaries.length === 0) {
     return <p className='text-gray-600 p-4 text-center'>No aggregated ELO data to display or insufficient models/variants processed.</p>;
   }
@@ -23,6 +46,92 @@ const AggregatedEloDisplay: React.FC<AggregatedEloDisplayProps> = ({ data }) => 
           {data.rankingSetId && <span>| Set ID: {data.rankingSetId}</span>}
         </div>
       </header>
+
+      {/* Prompt Variant Stability Ranking Section */}
+      {stabilityRanking.length > 0 && (
+        <div className='mb-8 p-4 bg-green-100 border border-green-300 rounded-lg shadow'>
+          <h3 className='text-lg font-semibold text-green-700 mb-1 text-center'>
+            Prompt Variant Stability Ranking (Aggregated)
+          </h3>
+          <div className='text-xs text-green-600 mb-3 text-center space-y-1 px-2'>
+            <p>
+              This ranks prompt variants by their average consistency (Spearman's ρ) with all other tested variants across models. 
+              A <strong>higher score (closer to 1)</strong> suggests the variant's item ranking is more similar to the consensus ranking order.
+            </p>
+            <p>
+              <strong>Note:</strong> High stability indicates consistency <span className="italic">relative to other tested variants</span>; 
+              it does <span className="font-semibold">not</span> guarantee the variant is unbiased or objectively "best". 
+              However, a more stable and sensible prompt may reduce variability from phrasing alone.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className='min-w-full w-auto table-auto text-xs border border-green-200'>
+              <thead className='bg-green-200'>
+                <tr>
+                  <th className='px-3 py-2 text-left font-medium text-green-700 tracking-wider'>#</th>
+                  <th className='px-3 py-2 text-left font-medium text-green-700 tracking-wider'>Prompt Variant</th>
+                  <th className='px-3 py-2 text-center font-medium text-green-700 tracking-wider'>Avg. Spearman (ρ)</th>
+                  <th className='px-3 py-2 text-center font-medium text-green-700 tracking-wider'>Compared Variants</th>
+                </tr>
+              </thead>
+              <tbody className='bg-white divide-y divide-green-100'>
+                {stabilityRanking.map((variantRank, index) => (
+                  <tr key={variantRank.variantName} className='hover:bg-green-50'>
+                    <td className='px-3 py-2 whitespace-nowrap text-green-800 font-medium'>{index + 1}</td>
+                    <td className='px-3 py-2 whitespace-nowrap text-green-800 font-semibold'>{variantRank.variantName}</td>
+                    <td className='px-3 py-2 whitespace-nowrap text-center text-green-800 font-bold'>
+                      {variantRank.averageSpearmanCorrelation !== null 
+                        ? variantRank.averageSpearmanCorrelation.toFixed(3)
+                        : 'N/A'}
+                    </td>
+                    <td className='px-3 py-2 whitespace-nowrap text-center text-green-700'>{variantRank.comparedToVariantsCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Model Ranking by Crossover Score Section */} 
+      {sortedModelCrossoverRankings.length > 0 && (
+        <div className='mb-8 p-4 bg-sky-50 border border-sky-300 rounded-lg shadow'>
+          <h3 className='text-lg font-semibold text-sky-700 mb-1 text-center'>
+            Model Ranking by Internal Prompt Stability (Crossover Score)
+          </h3>
+          <div className='text-xs text-sky-600 mb-3 text-center space-y-1 px-2'>
+            <p>
+              This ranks selected models by their internal Crossover Score, calculated from the first ELO set for each model.
+              A <strong>lower score</strong> suggests the model's item rankings were more consistent (less sensitive) across its own prompt variants for this ELO task.
+            </p>
+            <p>
+              <strong>Note:</strong> This score reflects stability against the model's <span className="italic">own</span> prompt variations, not necessarily correctness or comparison to other models' outputs directly.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className='min-w-full w-auto table-auto text-xs border border-sky-200'>
+              <thead className='bg-sky-200'>
+                <tr>
+                  <th className='px-3 py-2 text-left font-medium text-sky-700 tracking-wider'>#</th>
+                  <th className='px-3 py-2 text-left font-medium text-sky-700 tracking-wider'>Model Name</th>
+                  <th className='px-3 py-2 text-center font-medium text-sky-700 tracking-wider'>Crossover Score (Lower is Better)</th>
+                </tr>
+              </thead>
+              <tbody className='bg-white divide-y divide-sky-100'>
+                {sortedModelCrossoverRankings.map((modelRank, index) => (
+                  <tr key={modelRank.modelName} className='hover:bg-sky-50'>
+                    <td className='px-3 py-2 whitespace-nowrap text-sky-800 font-medium'>{index + 1}</td>
+                    <td className='px-3 py-2 whitespace-nowrap text-sky-800 font-semibold'>{modelRank.modelName}</td>
+                    <td className='px-3 py-2 whitespace-nowrap text-center text-sky-800 font-bold'>
+                      {modelRank.crossoverScore}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className='space-y-8'>
         {data.variantsSummaries.map((variantItem, index) => (

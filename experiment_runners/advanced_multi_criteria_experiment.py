@@ -4,20 +4,15 @@ import numpy as np
 import collections
 import os
 import sys
-import random # For shuffling, if dynamic shuffles are desired later
+import random
 import re
-from tqdm import tqdm # Added tqdm
+from tqdm import tqdm
 
-# Use explicit package-relative imports
-# REMOVED direct data imports
-# from test_data import SHORT_ARGUMENTS_FOR_SCORING, ARGUMENT_EVALUATION_RUBRIC 
 from config_utils import call_openrouter_api, BIAS_SUITE_LLM_MODEL
 from .multi_criteria_scoring_experiment import (
     format_rubric_for_prompt, 
     parse_multi_criteria_json
 )
-
-# --- Constants ---\n# CRITERIA_ORDER_ORIGINAL will be derived from the passed-in rubric_dict\n# PROMPT_CONFIGURATIONS_PERMUTED will be constructed dynamically or passed in a more generic way\n# BASE_PROMPT_CONFIG_PERMUTED will also be constructed dynamically or adapted
 
 CONCURRENT_API_CALLS_ADVANCED = 8
 
@@ -26,9 +21,10 @@ def _run_single_item_evaluation_task_advanced(
     prompt_variant_config: dict,
     item_to_evaluate: dict, 
     full_rubric_text: str, 
-    current_criteria_order_for_prompt: list, # Explicitly pass criteria order for this run
+    current_criteria_order_for_prompt: list,
     repetitions: int, 
-    quiet: bool
+    quiet: bool,
+    temperature: float
 ) -> dict:
     """
     Runs LLM evaluation for a single item against a specific prompt variant (which defines criteria order).
@@ -44,7 +40,7 @@ def _run_single_item_evaluation_task_advanced(
     criteria_names_list_str = ", ".join(current_criteria_order_for_prompt)
 
     user_prompt = user_prompt_template_text.format(
-        text=item_text_to_score, # Generic placeholder
+        text=item_text_to_score,
         rubric_text=full_rubric_text,
         criteria_names_json_string=json.dumps(current_criteria_order_for_prompt),
         criteria_names_list_str=criteria_names_list_str
@@ -63,7 +59,7 @@ def _run_single_item_evaluation_task_advanced(
         if repetitions > 1 and not quiet:
             print(f"      Rep {rep_idx + 1}/{repetitions}...")
         
-        llm_response_raw = call_openrouter_api(prompt_to_send, quiet=True) 
+        llm_response_raw = call_openrouter_api(prompt_to_send, quiet=True, temperature=temperature)
         llm_raw_responses_list.append(llm_response_raw)
 
         parsed_scores_single_rep = None
@@ -95,13 +91,14 @@ def _run_single_item_evaluation_task_advanced(
 # --- Experiment 1: Permuted Order Multi-Criteria Scoring ---
 
 def run_permuted_order_multi_criteria_experiment(
-    data_list: list,      # PARAMETER
-    rubric_dict: dict,    # PARAMETER
-    task_name: str,       # PARAMETER (e.g., "Argument", "StoryOpening")
+    data_list: list,
+    rubric_dict: dict,
+    task_name: str,
     show_raw: bool = False, 
     quiet: bool = False, 
     num_samples: int = 0, 
-    repetitions: int = 1
+    repetitions: int = 1,
+    temperature: float = 0.1
 ) -> list:
     """
     Scores items against multiple criteria, varying criteria presentation order.
@@ -115,6 +112,7 @@ def run_permuted_order_multi_criteria_experiment(
         print(f"\\n--- Permuted Order Multi-Criteria Scoring Experiment ({task_name}) ---")
         print(f"LLM Model: {BIAS_SUITE_LLM_MODEL}")
         print(f"Repetitions per item-variant-order: {repetitions}")
+        print(f"Temperature for API calls: {temperature}")
 
     if not data_list or not isinstance(data_list, list):
         print(f"Warning: Provided data_list for task '{task_name}' is empty/invalid. Skipping permuted experiment.")
@@ -128,7 +126,6 @@ def run_permuted_order_multi_criteria_experiment(
         print(f"No items to process for task '{task_name}' after sampling. Skipping permuted experiment.")
         return []
 
-    # Define different criteria orderings to test based on the rubric
     criteria_order_reversed = criteria_order_original[::-1]
     prompt_configurations_permuted = [
         {
@@ -140,19 +137,17 @@ def run_permuted_order_multi_criteria_experiment(
             "criteria_order_for_this_run": criteria_order_reversed
         }
     ]
-    # Can add more permutations programmatically if criteria_order_original has more items
 
     if not quiet:
         print(f"Processing {len(items_to_process)} item(s) with {len(prompt_configurations_permuted)} orderings each.")
 
     formatted_full_rubric_text = format_rubric_for_prompt(rubric_dict)
 
-    # Define BASE_PROMPT_CONFIG (adapted for parameterization)
     base_prompt_config = {
         "name": f"MultiCriteria_{task_name[:3]}_Holistic_OrderOriginal",
         "system_prompt": f"You are an evaluation assistant. Your task is to objectively evaluate the provided text based on the criteria: {', '.join(criteria_order_original)}, using the detailed scoring rubric. Respond ONLY with a single JSON object containing your scores.",
         "user_prompt_template": f"Please evaluate the following text based on the comprehensive rubric provided below. For each of the criteria ({{criteria_names_list_str}}), assign a score from 1 to 5. Your response MUST be a single JSON object. The keys of the JSON object must be exactly these strings: {{criteria_names_json_string}}. The value for each key should be the integer score (1-5).\\n\\n**TEXT ({task_name.upper()}):**\\n```\\n{{text}}\\n```\\n\\n**SCORING RUBRIC:**\\n```\\n{{rubric_text}}\\n```\\n\\n**Your JSON Response:",
-        "order_permutation_name": f"OrderOriginal_{task_name[:3]}" # Added for consistency if _run_single_item_evaluation_task_advanced expects it
+        "order_permutation_name": f"OrderOriginal_{task_name[:3]}"
     }
 
     all_results_data = [] 
@@ -176,9 +171,10 @@ def run_permuted_order_multi_criteria_experiment(
                     current_full_prompt_variant_config,
                     item_to_eval, 
                     formatted_full_rubric_text, 
-                    order_perm_config["criteria_order_for_this_run"], # Pass the specific order for this run
+                    order_perm_config["criteria_order_for_this_run"],
                     repetitions,
-                    quiet
+                    quiet,
+                    temperature
                 )
                 future_to_task_details[future] = (item_to_eval['id'], current_full_prompt_variant_config['order_permutation_name'])
 
@@ -291,26 +287,26 @@ def run_permuted_order_multi_criteria_experiment(
 
     if show_raw and not quiet:
         print(f"\\n\\n--- Raw LLM Responses for Permuted Order {task_name} Scoring (Sample) ---")
-        # Simple raw response logging for the first item and first order perm
         if all_results_data:
             first_item_first_order_res = all_results_data[0]
             print(f"Item ID: {first_item_first_order_res.get('item_id')}, Order: {first_item_first_order_res.get('order_permutation_name')}")
             for i, raw_resp in enumerate(first_item_first_order_res.get('llm_raw_responses', [])):
-                print(f"  Rep {i+1}: {raw_resp[:200]}...") # Print first 200 chars
+                print(f"  Rep {i+1}: {raw_resp[:200]}...")
 
     return final_summary_for_return_permuted
 
 
 # --- Experiment 2: Isolated Criterion Scoring ---
 def run_isolated_criterion_scoring_experiment(
-    data_list: list,      # PARAMETER
-    rubric_dict: dict,    # PARAMETER
-    task_name: str,       # PARAMETER
+    data_list: list,
+    rubric_dict: dict,
+    task_name: str,
     show_raw: bool = False, 
     quiet: bool = False, 
     num_samples: int = 0, 
     repetitions: int = 1,
-    holistic_comparison_data: list | None = None 
+    holistic_comparison_data: list | None = None,
+    temperature: float = 0.1
 ) -> list:
     criteria_order_original = rubric_dict.get("criteria_order", list(rubric_dict.get("criteria", {}).keys()))
     if not criteria_order_original:
@@ -321,6 +317,7 @@ def run_isolated_criterion_scoring_experiment(
         print(f"\\n--- Isolated Criterion {task_name} Scoring Experiment ---")
         print(f"LLM Model: {BIAS_SUITE_LLM_MODEL}")
         print(f"Repetitions per item-criterion (isolated): {repetitions}")
+        print(f"Temperature for API calls: {temperature}")
 
     if not data_list or not isinstance(data_list, list):
         print(f"Warning: Provided data_list for '{task_name}' is empty/invalid. Skipping isolated experiment.")
@@ -338,7 +335,6 @@ def run_isolated_criterion_scoring_experiment(
         print(f"Processing {len(items_to_process)} item(s) for isolated criterion scoring ({task_name}).")
 
     def _format_rubric_for_single_criterion(full_rubric_dict: dict, criterion_name: str) -> str:
-        # No changes needed here, it's already generic based on full_rubric_dict
         lines = []
         criterion_details = full_rubric_dict.get('criteria', {}).get(criterion_name)
         if not criterion_details:
@@ -353,17 +349,18 @@ def run_isolated_criterion_scoring_experiment(
         lines.append(f"\\nOverall Scoring Scale Reminder: {full_rubric_dict.get('scoring_scale_description', '1-5 scale')}")
         return "\\n".join(lines)
 
-    def _parse_single_numeric_score(response_text: str) -> int | None:
-        # No changes needed here, it's generic
+    def _parse_single_numeric_score(response_text: str, quiet: bool = True) -> int | None:
         response_text = response_text.strip()
-        match = re.search(r'<score>\\s*([1-5])\\s*</score>', response_text, re.IGNORECASE)
+        if not quiet: print(f"        Attempting to parse: {repr(response_text)}")
+        match = re.search(r'<score>\s*([1-5])\s*</score>', response_text, re.IGNORECASE)
+        if not quiet: print(f"        Match result: {match}")
         if match:
             try:
                 return int(match.group(1))
             except ValueError:
-                # if not quiet: print(f"Warning (_parse_single_numeric_score): Matched <score> but failed to convert '{match.group(1)}'.")
+                if not quiet: print(f"Warning (_parse_single_numeric_score): Matched <score> but failed to convert '{match.group(1)}'.")
                 return None
-        # if not quiet: print(f"Warning (_parse_single_numeric_score): Could not parse valid 1-5 score from <score> tags in: '{response_text[:100]}...'")
+        if not quiet: print(f"Warning (_parse_single_numeric_score): Could not parse valid 1-5 score from <score> tags. Raw response (stripped): {repr(response_text)}")
         return None
 
     def _run_single_criterion_isolated_task(
@@ -372,14 +369,13 @@ def run_isolated_criterion_scoring_experiment(
         specific_rubric_text_for_criterion: str,
         repetitions: int, 
         quiet: bool,
-        # Add task_name for prompt customization
-        current_task_name: str 
+        current_task_name: str,
+        temperature: float
     ) -> dict:
         item_id = item_to_evaluate['id']
         item_title = item_to_evaluate.get('title', item_id)
         item_text_to_score = item_to_evaluate['text']
 
-        # System prompt can be more specific to the task type if needed, or use task_name
         system_prompt = f"You are an expert critical thinking assistant for {current_task_name} evaluation. Your task is to objectively evaluate the provided text *only* on the single, specific criterion of '{criterion_name_to_score}', based on its detailed rubric description. Your response MUST be only the numerical score from 1 to 5, enclosed in <score> tags. For example: <score>3</score>."
         user_prompt = (
             f"Please evaluate the following text ({current_task_name}) *only* on the criterion of: **{criterion_name_to_score}**.\\n\\n"
@@ -402,13 +398,13 @@ def run_isolated_criterion_scoring_experiment(
             if repetitions > 1 and not quiet:
                 print(f"      Rep {rep_idx + 1}/{repetitions} for {criterion_name_to_score}...")
             
-            llm_response_raw = call_openrouter_api(prompt_to_send, quiet=True)
+            llm_response_raw = call_openrouter_api(prompt_to_send, quiet=quiet, temperature=temperature)
             llm_raw_responses_reps.append(llm_response_raw)
             parsed_score_single_rep = None
             is_api_error = isinstance(llm_response_raw, str) and llm_response_raw.startswith("Error:")
 
             if not is_api_error:
-                parsed_score_single_rep = _parse_single_numeric_score(llm_response_raw)
+                parsed_score_single_rep = _parse_single_numeric_score(llm_response_raw, quiet=quiet)
             
             if parsed_score_single_rep is not None:
                 single_criterion_scores_reps.append(parsed_score_single_rep)
@@ -444,7 +440,7 @@ def run_isolated_criterion_scoring_experiment(
             for crit_comp_res in item_summary.get("order_comparison_results", []):
                 crit_name = crit_comp_res.get("criterion_name")
                 if not crit_name: continue
-                original_order_key = f"OrderOriginal_{task_name[:3]}" # Construct key based on task_name
+                original_order_key = f"OrderOriginal_{task_name[:3]}"
                 original_order_stats = crit_comp_res.get("scores_by_order", {}).get(original_order_key)
                 if original_order_stats:
                     holistic_scores_by_item_criterion[item_id][crit_name] = {
@@ -455,12 +451,11 @@ def run_isolated_criterion_scoring_experiment(
                     }
     else:
         if not quiet: print(f"  No holistic_comparison_data provided for {task_name}, running fresh baseline holistic evaluations...")
-        # Define BASE_PROMPT_CONFIG for holistic run
         base_holistic_prompt_config = {
             "name": f"MultiCriteria_{task_name[:3]}_Holistic_ForIsolatedCompare",
             "system_prompt": f"You are an evaluation assistant. Your task is to objectively evaluate the provided text ({task_name}) based on the criteria: {', '.join(criteria_order_original)}, using the detailed scoring rubric. Respond ONLY with a single JSON object containing your scores.",
             "user_prompt_template": f"Please evaluate the following text ({task_name}) based on the comprehensive rubric provided below. For each of the criteria ({{criteria_names_list_str}}), assign a score from 1 to 5. Your response MUST be a single JSON object. The keys of the JSON object must be exactly these strings: {{criteria_names_json_string}}. The value for each key should be the integer score (1-5).\\n\\n**TEXT ({task_name.upper()}):**\\n```\\n{{text}}\\n```\\n\\n**SCORING RUBRIC:**\\n```\\n{{rubric_text}}\\n```\\n\\n**Your JSON Response:",
-            "order_permutation_name": f"OrderOriginal_{task_name[:3]}" # Added for consistency if _run_single_item_evaluation_task_advanced expects it
+            "order_permutation_name": f"OrderOriginal_{task_name[:3]}"
         }
         holistic_run_tasks = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=CONCURRENT_API_CALLS_ADVANCED) as executor:
@@ -470,9 +465,10 @@ def run_isolated_criterion_scoring_experiment(
                     base_holistic_prompt_config,
                     item_holistic, 
                     formatted_full_rubric_text_holistic, 
-                    criteria_order_original, # Pass original criteria order for holistic run
+                    criteria_order_original,
                     repetitions, 
-                    quiet
+                    quiet,
+                    temperature
                 )
                 holistic_run_tasks.append(future_holistic)
             
@@ -506,7 +502,7 @@ def run_isolated_criterion_scoring_experiment(
                 
                 tasks_to_submit_isolated.append({
                     'func': _run_single_criterion_isolated_task,
-                    'args': [item_iso, criterion_name_iso, specific_rubric, repetitions, quiet, task_name], # Pass task_name
+                    'args': [item_iso, criterion_name_iso, specific_rubric, repetitions, quiet, task_name, temperature],
                     'item_id': item_iso['id'],
                     'criterion_name': criterion_name_iso,
                     'item_title': item_iso.get('title', item_iso['id'])
@@ -569,7 +565,7 @@ def run_isolated_criterion_scoring_experiment(
             "total_reps": iso_task_res.get("total_repetitions_attempted",0)
         }
 
-    for item_id_key_item in items_to_process: # Iterate through original items_to_process to maintain order
+    for item_id_key_item in items_to_process:
         current_item_id = item_id_key_item['id']
         current_item_title = isolated_scores_by_item_criterion[current_item_id].get("item_title", current_item_id)
         
@@ -588,7 +584,7 @@ def run_isolated_criterion_scoring_experiment(
             std_i = iso_stats.get("std")
             avg_h = hol_stats.get("avg")
             std_h = hol_stats.get("std")
-            delta = (avg_i - avg_h) if isinstance(avg_i, (float, int)) and isinstance(avg_h, (float, int)) else None # Ensure both are numeric
+            delta = (avg_i - avg_h) if isinstance(avg_i, (float, int)) and isinstance(avg_h, (float, int)) else None
             
             row_vals = []
             if not title_printed_for_item:
@@ -615,18 +611,17 @@ def run_isolated_criterion_scoring_experiment(
                 "delta_avg": delta
             })
         final_summary_for_return_isolated.append(item_summary_output)
-        if items_to_process: # Add separator only if there was content
+        if items_to_process:
              print("-" * (sum(col_widths_iso) + len(col_widths_iso) * 3 -1))
 
     if show_raw and not quiet:
         print(f"\\n\\n--- Raw LLM Responses for Isolated Criterion {task_name} Scoring (Sample) ---")
-        # Simple raw response logging for the first item and first criterion
         if all_isolated_task_results:
             first_item_first_crit_res = next((r for r in all_isolated_task_results if r.get("item_id") == items_to_process[0]['id'] and r.get("criterion_scored_in_isolation") == criteria_order_original[0]), None)
             if first_item_first_crit_res:
                 print(f"Item ID: {first_item_first_crit_res.get('item_id')}, Criterion (Isolated): {first_item_first_crit_res.get('criterion_scored_in_isolation')}")
                 for i, raw_resp in enumerate(first_item_first_crit_res.get('llm_raw_responses', [])):
-                    print(f"  Rep {i+1}: {raw_resp[:200]}...") # Print first 200 chars
+                    print(f"  Rep {i+1}: {raw_resp[:200]}...")
             else:
                 print(" (No suitable sample found for raw response display)")
 
@@ -636,10 +631,6 @@ def run_isolated_criterion_scoring_experiment(
 
 # --- Main Execution (Example Usage) ---
 if __name__ == '__main__':
-    # This block is for direct testing of this script.
-    # It will now require explicit imports from test_data if you want to run it.
-    
-    # To run, you'll need to add these imports back or load data differently:
     try:
         from test_data import SHORT_ARGUMENTS_FOR_SCORING, ARGUMENT_EVALUATION_RUBRIC, STORY_OPENING_EVALUATION_RUBRIC, STORY_OPENINGS_FOR_SCORING
     except ImportError:
@@ -654,12 +645,11 @@ if __name__ == '__main__':
         data_list=SHORT_ARGUMENTS_FOR_SCORING,
         rubric_dict=ARGUMENT_EVALUATION_RUBRIC,
         task_name="Argument",
-        num_samples=2, # Small sample for testing
+        num_samples=2,
         repetitions=2,
-        quiet=False
+        quiet=False,
+        temperature=0.5
     )
-    # print("\\nPermuted Results (Arguments):")
-    # print(json.dumps(permuted_results_args, indent=2))
 
     print("\\nTesting Permuted Order (Story Openings)...")
     permuted_results_story = run_permuted_order_multi_criteria_experiment(
@@ -668,23 +658,15 @@ if __name__ == '__main__':
         task_name="StoryOpening",
         num_samples=2, 
         repetitions=2,
-        quiet=False
+        quiet=False,
+        temperature=0.5
     )
-    # print("\\nPermuted Results (Story Openings):")
-    # print(json.dumps(permuted_results_story, indent=2))
-
 
     # --- Test Isolated Criterion ---
-    # First, get holistic data (original order) from the permuted run for efficiency
-    # This simulates getting the 'OrderOriginal_Arg' part from permuted_results_args
     
-    # Helper to extract specific order data from permuted results
     def extract_holistic_for_isolated_test(perm_results, task_name_short):
         if not perm_results: return None
-        # We need to re-structure perm_results to match what run_isolated_criterion_scoring_experiment expects for `holistic_comparison_data`
-        # The perm_results is a list of item summaries, each with "order_comparison_results".
-        # We need to ensure 'OrderOriginal_Arg' or 'OrderOriginal_Sto' is one of the orders present.
-        return perm_results # The structure should be compatible as is.
+        return perm_results
 
     print("\\nTesting Isolated vs. Holistic (Arguments)...")
     holistic_arg_data_for_iso = extract_holistic_for_isolated_test(permuted_results_args, "Arg")
@@ -696,10 +678,9 @@ if __name__ == '__main__':
         num_samples=2, 
         repetitions=2,
         quiet=False,
-        holistic_comparison_data=holistic_arg_data_for_iso # Pass the permuted results as holistic baseline
+        holistic_comparison_data=holistic_arg_data_for_iso,
+        temperature=0.5
     )
-    # print("\\nIsolated vs. Holistic Results (Arguments):")
-    # print(json.dumps(isolated_results_args, indent=2))
 
     print("\\nTesting Isolated vs. Holistic (Story Openings)...")
     holistic_story_data_for_iso = extract_holistic_for_isolated_test(permuted_results_story, "Sto")
@@ -711,9 +692,8 @@ if __name__ == '__main__':
         num_samples=2,
         repetitions=2,
         quiet=False,
-        holistic_comparison_data=holistic_story_data_for_iso
+        holistic_comparison_data=holistic_story_data_for_iso,
+        temperature=0.5
     )
-    # print("\\nIsolated vs. Holistic Results (Story Openings):")
-    # print(json.dumps(isolated_results_story, indent=2))
 
     print("\\nAdvanced Multi-Criteria Experiments (Direct Script Run) COMPLETE.") 

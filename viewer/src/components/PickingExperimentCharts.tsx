@@ -24,23 +24,33 @@ ChartJS.register(
 // Define the structure of the data expected by the charts AFTER processing
 export interface ProcessedPickingData {
   variantName: string;
-  labelingSchemeName: string; // New: Name of the labeling scheme used
-  schemeDescription: string; // New: Description of the scheme
-  schemeDisplayLabel1: string; // New: e.g., "(A)" or "ID_rand1" - the first label from the scheme
-  schemeDisplayLabel2: string; // New: e.g., "(B)" or "ID_rand2" - the second label from the scheme
-  biasRate: number; // Percentage
-  consistencyRate: number; // Percentage
-  totalValidPairsForBias: number;
-  totalValidPairsForConsistency: number;
-  favoredLabel1Count: number; // New: Count of pairs biased towards the scheme's first label
-  favoredLabel2Count: number; // New: Count of pairs biased towards the scheme's second label
-  favoredPositionInconclusiveCount: number; // Count of biased pairs where position was inconclusive (name can remain)
+  labelingSchemeName: string; 
+  schemeDescription: string; 
+  schemeDisplayLabel1: string; 
+  schemeDisplayLabel2: string; 
+  
+  // METRIC DERIVED FROM FULL REPETITION DATA (calculated in page.tsx)
+  avgFirstSlotPreferenceForScheme: number; // Average % of times the item in the first presentation slot was picked for this scheme
+  
+  repetitionsPerOrderRun?: number; 
 }
 
 interface PickingExperimentChartsProps {
   processedData: ProcessedPickingData[]; // Expects data pre-processed by page.tsx
   modelName: string;
 }
+
+// Helper function to get class names for highlighting picking stats
+const getPickingStatClass = (metricName: 'avgFirstSlotPreference', value: number): string => {
+  let baseClasses = "font-semibold";
+  if (metricName === 'avgFirstSlotPreference') {
+    // Higher deviation from 50% is more biased. Let's say >10% deviation (i.e., <40% or >60%) is notable.
+    if (value < 40 || value > 60) return `${baseClasses} text-red-600`;
+    if (value < 45 || value > 55) return `${baseClasses} text-yellow-600`;
+  }
+  // Removed consensusBiasRate and consensusConsistencyRate logic
+  return `${baseClasses} text-gray-700`; // Default color if no threshold met
+};
 
 // The processPickingData function is MOVED to page.tsx as it needs the full experiment data (all variants).
 // This component now only focuses on rendering the charts with the processed data.
@@ -67,7 +77,8 @@ const PickingExperimentCharts: React.FC<PickingExperimentChartsProps> = ({ proce
   const overviewChartDatasets = uniqueVariantNames.map((variantName, index) => {
     const dataForVariant = uniqueLabelingSchemes.map(schemeName => {
       const entry = processedData.find(d => d.variantName === variantName && d.labelingSchemeName === schemeName);
-      return entry ? entry.biasRate : 0; // Show 0 if no data for this variant/scheme combo
+      // Plot deviation from 50% for avgFirstSlotPreferenceForScheme
+      return entry ? Math.abs(entry.avgFirstSlotPreferenceForScheme - 50) : 0; 
     });
     return {
       label: variantName,
@@ -89,7 +100,7 @@ const PickingExperimentCharts: React.FC<PickingExperimentChartsProps> = ({ proce
     plugins: {
       title: {
         display: true,
-        text: `Overall Positional Bias Rate Comparison (Model: ${modelName})`,
+        text: `Positional Influence: Avg. First Slot Preference Deviation from 50% (Model: ${modelName})`,
         font: { size: 18, weight: 'bold' },
         padding: { top: 10, bottom: 20 }
       },
@@ -124,10 +135,11 @@ const PickingExperimentCharts: React.FC<PickingExperimentChartsProps> = ({ proce
       y: {
         title: {
           display: true,
-          text: 'Positional Bias Rate (%)',
+          text: 'Avg. First Slot Pref. Deviation from 50% (%)',
           font: { size: 14, weight: 'normal'}
         },
         min: 0,
+        max: 50, // Max deviation is 50% (e.g., 100% preference for one slot or 0% for the other)
         ticks: {
           callback: function(value) {
             return value + '%';
@@ -158,94 +170,13 @@ const PickingExperimentCharts: React.FC<PickingExperimentChartsProps> = ({ proce
         </div>
       </div>
 
-      {/* Existing Detailed Breakdown Charts and Summaries */}
+      {/* Existing Detailed Breakdown Charts and Summaries */} {/* THIS SECTION WILL BE REMOVED/HEAVILY MODIFIED */} Broadband
       {Object.entries(dataByVariant).map(([variantName, variantDataArray]) => {
         
-        const labels = variantDataArray.map(vd => vd.labelingSchemeName);
+        // const labels = variantDataArray.map(vd => vd.labelingSchemeName); // No longer needed for detailed chart
         
-        const detailedChartData: ChartData<'bar'> = {
-          labels: labels,
-          datasets: [
-            {
-              label: `Favored ${variantDataArray[0]?.schemeDisplayLabel1 || 'Label 1'} (% of biased)`,
-              data: variantDataArray.map(vd => vd.totalValidPairsForBias > 0 ? (vd.favoredLabel1Count / (vd.favoredLabel1Count + vd.favoredLabel2Count + vd.favoredPositionInconclusiveCount || 1)) * 100 : 0),
-              backgroundColor: 'rgba(54, 162, 235, 0.6)', 
-              stack: 'biasStack',
-            },
-            {
-              label: `Favored ${variantDataArray[0]?.schemeDisplayLabel2 || 'Label 2'} (% of biased)`,
-              data: variantDataArray.map(vd => vd.totalValidPairsForBias > 0 ? (vd.favoredLabel2Count / (vd.favoredLabel1Count + vd.favoredLabel2Count + vd.favoredPositionInconclusiveCount || 1)) * 100 : 0),
-              backgroundColor: 'rgba(255, 99, 132, 0.6)', 
-              stack: 'biasStack',
-            },
-            {
-              label: 'Favored (Inconclusive) (% of biased)',
-              data: variantDataArray.map(vd => vd.totalValidPairsForBias > 0 ? (vd.favoredPositionInconclusiveCount / (vd.favoredLabel1Count + vd.favoredLabel2Count + vd.favoredPositionInconclusiveCount || 1)) * 100 : 0),
-              backgroundColor: 'rgba(201, 203, 207, 0.6)',
-              stack: 'biasStack',
-            },
-          ],
-        };
-
-        const detailedChartOptions: ChartOptions<'bar'> = {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            title: {
-              display: true,
-              text: `Positional Bias Breakdown for Variant: ${variantName}`,
-              font: { size: 16 },
-              padding: { top: 10, bottom: 10}
-            },
-            tooltip: {
-              mode: 'index',
-              intersect: false,
-              callbacks: {
-                label: function(context) {
-                  let label = context.dataset.label || '';
-                  if (label) label += ': ';
-                  if (context.parsed.y !== null) label += context.parsed.y.toFixed(2) + '%';
-                  
-                  const schemeIndex = context.dataIndex;
-                  const schemeData = variantDataArray[schemeIndex];
-                  if (schemeData) {
-                     const totalBiasedForThisStack = schemeData.favoredLabel1Count + schemeData.favoredLabel2Count + schemeData.favoredPositionInconclusiveCount;
-                     if (totalBiasedForThisStack > 0 && context.dataset.stack === 'biasStack') {
-                        label += ` (Total Bias: ${schemeData.biasRate.toFixed(2)}%, ${totalBiasedForThisStack} pairs)`
-                     }
-                  }
-                  return label;
-                }
-              }
-            },
-            legend: {
-              position: 'top' as const,
-            },
-          },
-          scales: {
-            x: {
-              stacked: true,
-              title: {
-                display: true,
-                text: 'Labeling Scheme',
-              },
-            },
-            y: {
-              stacked: true,
-              title: {
-                display: true,
-                text: 'Breakdown of Biased Pairs (%)',
-              },
-              min: 0,
-              max: 100, // Max is 100 because it's percentage of biased pairs
-              ticks: {
-                callback: function(value) {
-                  return value + '%';
-                }
-              }
-            },
-          },
-        };
+        // The detailedChartData and detailedChartOptions are for the stacked bar chart which we are removing.
+        // So, we will remove this entire block related to detailedChartData and detailedChartOptions.
 
         return (
           <div key={variantName} className="p-4 border border-gray-200 rounded-lg bg-white shadow-md">
@@ -253,15 +184,17 @@ const PickingExperimentCharts: React.FC<PickingExperimentChartsProps> = ({ proce
               Prompt Variant Detail: {variantName}
             </h3>
             
-            <div className="mb-6 h-80"> 
+            {/* REMOVE The detailed breakdown chart (Bar component) */}
+            {/* <div className="mb-6 h-80"> 
               <Bar options={detailedChartOptions} data={detailedChartData} />
-            </div>
+            </div> */}
 
-            {/* Detailed Summary Cards - slightly restyled */}
+            {/* Detailed Summary Cards - MODIFIED */}
             <div className="space-y-3 mt-4">
               {variantDataArray.map((singleVariantData, index) => {
-                const totalBiasedPairs = singleVariantData.favoredLabel1Count + singleVariantData.favoredLabel2Count + singleVariantData.favoredPositionInconclusiveCount;
-                const totalConsistentPairs = singleVariantData.totalValidPairsForBias - totalBiasedPairs;
+                // const totalBiasedPairs = singleVariantData.consensusFavoredLabel1Count + singleVariantData.consensusFavoredLabel2Count + singleVariantData.consensusFavoredPositionInconclusiveCount;
+                // const totalConsistentPairs = singleVariantData.totalValidPairsForBias - totalBiasedPairs;
+                // These consensus-based calcs are no longer needed here.
 
                 return (
                   <div key={index} className="p-3 border border-gray-200 rounded-md bg-gray-50 hover:shadow-sm transition-shadow">
@@ -269,30 +202,21 @@ const PickingExperimentCharts: React.FC<PickingExperimentChartsProps> = ({ proce
                       Labeling Scheme: {singleVariantData.labelingSchemeName} 
                       <span className="text-xs text-gray-500 ml-1">({singleVariantData.schemeDescription})</span>
                     </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                    <div className="grid grid-cols-1 md:grid-cols-1 gap-4 mb-2"> {/* Changed to 1 col for simplicity now */}
                       <div>
-                        <p><strong>Positional Bias Rate:</strong> {singleVariantData.biasRate.toFixed(2)}% 
-                          <span className="text-gray-600"> ({totalBiasedPairs} of {singleVariantData.totalValidPairsForBias} valid pairs)</span>
+                        <p className="text-sm text-gray-600">
+                          Avg. First Slot Preference: 
+                          <span className={getPickingStatClass('avgFirstSlotPreference', singleVariantData.avgFirstSlotPreferenceForScheme)}>
+                            {singleVariantData.avgFirstSlotPreferenceForScheme.toFixed(2)}%
+                          </span>
                         </p>
-                        {totalBiasedPairs > 0 && (
-                          <ul className="list-disc list-inside pl-3 mt-0.5 text-gray-500">
-                            <li>Favored "{singleVariantData.schemeDisplayLabel1}": {singleVariantData.favoredLabel1Count}</li>
-                            <li>Favored "{singleVariantData.schemeDisplayLabel2}": {singleVariantData.favoredLabel2Count}</li>
-                            {singleVariantData.favoredPositionInconclusiveCount > 0 && (
-                              <li>Inconclusive Bias: {singleVariantData.favoredPositionInconclusiveCount}</li>
-                            )}
-                          </ul>
-                        )}
-                      </div>
-                      <div>
-                        <p><strong>Consistency Rate:</strong> {singleVariantData.consistencyRate.toFixed(2)}% 
-                          <span className="text-gray-600"> ({totalConsistentPairs} of {singleVariantData.totalValidPairsForBias} valid pairs)</span>
+                        <p className="text-xs text-gray-500 italic">
+                          Avg. times item in 1st slot was picked (50% = no bias). Based on {singleVariantData.repetitionsPerOrderRun || 'N/A'} reps per order.
                         </p>
                       </div>
+                      {/* Removed the Consensus Bias Rate and Consensus Consistency Rate sections */}
                     </div>
-                    {(singleVariantData.totalValidPairsForBias === 0) && (
-                         <p className="text-xs text-orange-600 mt-1">Note: No valid pairs for bias/consistency calculation.</p>
-                    )}
+                    {/* Removed totalValidPairsForBias check as it was for consensus */}
                   </div>
                 );
               })}
