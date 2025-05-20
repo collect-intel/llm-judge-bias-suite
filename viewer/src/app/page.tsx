@@ -60,6 +60,12 @@ import { AggregatedClassificationOverallSummary } from '@/types/aggregatedClassi
 // Import the new display component for aggregated classification data
 import AggregatedClassificationDisplay from '@/components/AggregatedClassificationDisplay';
 
+// Import new component for picking samples
+import PickingSamplesDisplay from '@/components/PickingSamplesDisplay';
+
+// Import new component for scoring samples
+import ScoringSamplesDisplay from '@/components/ScoringSamplesDisplay';
+
 // Import aggregation calculators
 import {
   calculateAggregatedPickingData,
@@ -162,6 +168,9 @@ interface PickingPairDetail {
   run2_order: string; 
   run1_pick_distribution: { [key: string]: number }; 
   run2_pick_distribution: { [key: string]: number }; 
+  // Added for prompt/response samples
+  run1_sampled_interactions?: { prompt_sent_to_llm: string | null; sampled_llm_raw_responses: string[] } | null;
+  run2_sampled_interactions?: { prompt_sent_to_llm: string | null; sampled_llm_raw_responses: string[] } | null;
 }
 
 // This interface matches each element in the JSON array produced by the Python script
@@ -726,9 +735,13 @@ export default function Home() {
   return (
     // Using p-4 font-sans for full width, removed container mx-auto
     <div className="p-4 font-sans">
-      <header className="mb-8 text-center">
-        <h1 className="text-3xl font-bold text-gray-800">LLM-Judge Bias Results</h1>
-        <p className="text-gray-600 mt-1">Select an experiment and models to view and compare results.</p>
+      <header className="mb-10 text-center">
+        <h1 className="text-3xl font-bold text-gray-800 tracking-tight">
+          LLM-Judge Bias Results
+        </h1>
+        <p className="text-gray-600 mt-2">
+          Select an experiment and models to view and compare results.
+        </p>
         {scanResults.resultsDir && <p className="text-sm text-gray-500 mt-1">Reading from: <code>{scanResults.resultsDir}</code> directory (relative to project root)</p>}
       </header>
 
@@ -893,9 +906,21 @@ export default function Home() {
                   modelName={modelName} 
                 />
               )}
+              {/* Display Picking Samples if data is available */}
+              {actualExperimentType === 'picking' && modelDataState.data && (
+                <CollapsibleSection title="Prompt/Response Samples (Picking)" defaultOpen={false}>
+                  <PickingSamplesDisplay rawData={modelDataState.data as PickingExperimentApiResponse} modelName={modelName} />
+                </CollapsibleSection>
+              )}
               
               {hasScoringData && (
                 <ScoringExperimentViewer data={modelDataState.scoringExperimentData!} modelName={modelName} />
+              )}
+              {/* Display Scoring Samples if data is available */}
+              {actualExperimentType.startsWith('scoring') && modelDataState.data && (
+                <CollapsibleSection title="Prompt/Response Samples (Scoring)" defaultOpen={false}>
+                  <ScoringSamplesDisplay rawData={modelDataState.data as ScoringExperimentData} modelName={modelName} />
+                </CollapsibleSection>
               )}
 
               {hasPermutedOrderData && (
@@ -947,6 +972,10 @@ export default function Home() {
               {actualExperimentType.startsWith('adv_multi_criteria_isolated') && (!modelDataState.isolatedHolisticData || modelDataState.isolatedHolisticData.length === 0) && modelDataState.data && (
                  <div className="text-gray-500 p-4">No processable isolated/holistic data found for {modelName}. Raw JSON might be shown if available.</div>
               )}
+              {/* Display warning for Scoring if chart data missing but raw data exists */}
+              {actualExperimentType.startsWith('scoring') && !hasScoringData && modelDataState.data && (
+                 <div className="text-gray-500 p-4">No chart data for Scoring experiment for {modelName}, but raw samples might be available above or in JSON.</div>
+              )}
               {/* Updated Warning for ELO */}
               {actualExperimentType.startsWith('pairwise_elo') && 
                !hasPairwiseEloData && 
@@ -958,6 +987,10 @@ export default function Home() {
                !hasClassificationData && 
                modelDataState.data && (
                 <div className="text-gray-500 p-4">No processable Classification data found for {modelName}. Raw JSON might be shown if available.</div>
+              )}
+              {/* Add similar warning for Picking if needed, though JsonViewer is the generic fallback */}
+              {actualExperimentType === 'picking' && !hasPickingDataForChart && modelDataState.data && (
+                 <div className="text-gray-500 p-4">No chart data for Picking experiment for {modelName}, but raw samples might be available above or in JSON.</div>
               )}
             </section>
           );

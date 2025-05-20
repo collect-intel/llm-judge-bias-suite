@@ -14,6 +14,12 @@ from test_data import PICKING_PAIRS # Import test data
 
 CONCURRENT_API_CALLS = 8
 
+# Define symbol constants
+FILLED_SQUARE = "■"
+EMPTY_SQUARE = "□"
+FILLED_CIRCLE = "●"
+EMPTY_CIRCLE = "○"
+
 # --- Labeling Schemes Definition ---
 def _generate_random_id_pair():
     """Generates a pair of unique random alphanumeric IDs, e.g., ('ID_a1b2', 'ID_c3d4')."""
@@ -38,7 +44,7 @@ LABELING_SCHEMES = [
     },
     {
         "name": "TextAB",
-        "get_labels_for_pair": lambda: ("TEXT_A", "TEXT_B"), # Note: These might collide with internal 'text_A' id if not careful in interpretation, but fine for LLM prompt
+        "get_labels_for_pair": lambda: ("TEXT_A", "TEXT_B"),
         "description": "Labels are 'TEXT_A' and 'TEXT_B'"
     },
     {
@@ -58,8 +64,8 @@ LABELING_SCHEMES = [
     },
     {
         "name": "ExoticSymbolLabels",
-        "get_labels_for_pair": lambda: ("❖", "⊕"), # Using U+2756 and U+2295
-        "description": "Labels are '❖' and '⊕' (Exotic Unicode Symbols)"
+        "get_labels_for_pair": lambda: (FILLED_SQUARE, FILLED_CIRCLE), # Present filled square and filled circle
+        "description": "Labels are '■' and '●' (Filled Square and Filled Circle)"
     }
 ]
 
@@ -150,6 +156,11 @@ ORIGINAL_PROMPT_VARIANTS = [
 ]
 
 PROMPT_VARIANTS = []
+# The following loop programmatically creates system prompt versions for each original prompt variant.
+# The system prompt is generally extracted from the initial instructional part of the original prompt template.
+# This is a heuristic-based extraction and might require adjustments if new, structurally complex 
+# ORIGINAL_PROMPT_VARIANTS are added. Specific variants with unique structures 
+# (e.g., "Emphasis on Content", "ClarityPick: Terse") have custom handling.
 for original_variant in ORIGINAL_PROMPT_VARIANTS:
     PROMPT_VARIANTS.append(original_variant) # Add the original
 
@@ -247,10 +258,37 @@ def parse_picking_response(response_text, option1_id="Response 1", option2_id="R
     label2_clean_lower = label2_original_stripped.lower()
 
     def is_option_matched(text_to_check_lower, original_label_stripped, lower_label_stripped):
+        """
+        Checks if the picked text (text_to_check_lower) matches the original label (original_label_stripped).
+        Employs several matching strategies in a specific order:
+        1. Exact match (case-insensitive).
+        2. Symbol variants (e.g., filled vs. empty square/circle if original_label_stripped is a defined symbol).
+        3. Parenthetical deconstruction (e.g., "(A)" matches "A", or "A" matches "(A)").
+        4. Single character matching the last alphanumeric token of the label.
+        5. Substring containment (with word boundary checks for short, single-letter labels).
+        Returns a string indicating the match type (e.g., "exact", "variant_symbol_match") or None.
+        """
         # 1. Exact match (case insensitive)
         if text_to_check_lower == lower_label_stripped:
             return "exact"
         
+        # Rationale for accepting symbol variants (filled/empty):
+        # LLMs have occasionally been observed to return the empty version of a symbol 
+        # when the filled version was presented (and vice-versa). 
+        # This behavior's root cause isn't fully understood but is an observed trait.
+        # To make parsing more robust to this, we accept either form if the base symbol matches.
+        # NEW: Check for alternate symbol forms (filled/empty)
+        # original_label_stripped is the symbol *presented* in the prompt
+        # text_to_check_lower is the symbol *picked* by the LLM (already lowercased by caller)
+        if original_label_stripped == FILLED_SQUARE and text_to_check_lower == EMPTY_SQUARE: # .lower() not needed for symbols
+            return "variant_symbol_match"
+        if original_label_stripped == EMPTY_SQUARE and text_to_check_lower == FILLED_SQUARE:
+            return "variant_symbol_match"
+        if original_label_stripped == FILLED_CIRCLE and text_to_check_lower == EMPTY_CIRCLE:
+            return "variant_symbol_match"
+        if original_label_stripped == EMPTY_CIRCLE and text_to_check_lower == FILLED_CIRCLE:
+            return "variant_symbol_match"
+
         # 2. Parenthetical variations: label is "(X)", picked text is "X" or contains "X" (inner content)
         #    e.g. original_label_stripped = "(A)", picked_text_lower = "a" or "option a"
         match_label_paren = re.fullmatch(r"\\((.+)\\)", original_label_stripped) # Matches "(<something>)"
@@ -307,8 +345,8 @@ def parse_picking_response(response_text, option1_id="Response 1", option2_id="R
     match_type2 = is_option_matched(picked_clean_lower, label2_original_stripped, label2_clean_lower)
 
     # Define what constitutes a "strong" match for tie-breaking (various forms of exactness)
-    is_strong_match1 = match_type1 in ["exact", "exact_parenthetical_label_inner", "exact_parenthetical_picked_inner", "single_char_matches_last_token"]
-    is_strong_match2 = match_type2 in ["exact", "exact_parenthetical_label_inner", "exact_parenthetical_picked_inner", "single_char_matches_last_token"]
+    is_strong_match1 = match_type1 in ["exact", "exact_parenthetical_label_inner", "exact_parenthetical_picked_inner", "single_char_matches_last_token", "variant_symbol_match"]
+    is_strong_match2 = match_type2 in ["exact", "exact_parenthetical_label_inner", "exact_parenthetical_picked_inner", "single_char_matches_last_token", "variant_symbol_match"]
 
     if match_type1 and not match_type2:
         return option1_id # Return the original canonical option1_id (passed to function)
@@ -350,6 +388,8 @@ def _execute_pick_task(task_details, quiet=False, repetitions: int = 1, temperat
     picked_original_ids_list = []
     llm_raw_responses_list = []
     errors_in_repetitions_count = 0
+    # Store the prompt that's actually sent (it's the same for all reps in this task)
+    actual_prompt_sent_to_llm = prompt # Renamed from task_details["prompt"] for clarity here
 
     if not quiet:
         # Initial message for the task (covering all repetitions)
@@ -434,7 +474,8 @@ def _execute_pick_task(task_details, quiet=False, repetitions: int = 1, temperat
         "picked_option_labels": picked_option_labels_list, # List of actual labels picked e.g. ["(A)", "(A)", "(B)"]
         "picked_original_ids": picked_original_ids_list, # List of actual original IDs picked
         "errors_in_repetitions": errors_in_repetitions_count,
-        "total_repetitions": repetitions
+        "total_repetitions": repetitions,
+        "actual_prompt_sent_to_llm": actual_prompt_sent_to_llm # Add prompt even on exception for debugging
     }
 
 def _get_majority_pick_and_consistency(picked_original_ids_list, total_repetitions):
@@ -502,6 +543,21 @@ def _analyze_pair_results(
     )
     run2_errors = run2_results["errors_in_repetitions"]
     run2_total_reps = run2_results["total_repetitions"]
+
+    # --- Sampled Prompts/Responses for Debugging ---
+    # Prompt is the same for all reps in a run, so pick from run1.
+    # Responses are sampled up to min(repetitions, 3)
+    num_samples_to_include = min(run1_total_reps, 3) # Assuming run1_total_reps is representative of total_repetitions argument
+
+    sampled_run1_interactions = {
+        "prompt_sent_to_llm": run1_results.get("actual_prompt_sent_to_llm"),
+        "sampled_llm_raw_responses": run1_results.get("llm_raw_responses", [])[:num_samples_to_include]
+    }
+    sampled_run2_interactions = {
+        "prompt_sent_to_llm": run2_results.get("actual_prompt_sent_to_llm"),
+        "sampled_llm_raw_responses": run2_results.get("llm_raw_responses", [])[:num_samples_to_include]
+    }
+
 
     # --- Combined Analysis ---
     analysis_status = "OK"
@@ -576,6 +632,7 @@ def _analyze_pair_results(
         "run1_pick_distribution": run1_pick_distribution,
         "run1_errors": f"{run1_errors}/{run1_total_reps}",
         "run1_raw_llm_responses": run1_results["llm_raw_responses"] if not quiet else "Suppressed",
+        "run1_sampled_interactions": sampled_run1_interactions, # New for JSON output
 
         "run2_order": f"{run2_results['presented_as_label1_text']}: {run2_results['response1_original_id']} vs {run2_results['presented_as_label2_text']}: {run2_results['response2_original_id']}", # Updated order string
         "run2_majority_pick_id": run2_majority_pick_id,
@@ -583,6 +640,7 @@ def _analyze_pair_results(
         "run2_pick_distribution": run2_pick_distribution,
         "run2_errors": f"{run2_errors}/{run2_total_reps}",
         "run2_raw_llm_responses": run2_results["llm_raw_responses"] if not quiet else "Suppressed",
+        "run2_sampled_interactions": sampled_run2_interactions # New for JSON output
     }
     return pair_summary
 
@@ -731,7 +789,8 @@ def run_positional_bias_picking_experiment(model_to_run_experiment_with: str, nu
                             "picked_option_labels": [None],
                             "picked_original_ids": ["Exception"],
                             "errors_in_repetitions": repetitions,
-                            "total_repetitions": repetitions
+                            "total_repetitions": repetitions,
+                            "actual_prompt_sent_to_llm": task_details["prompt"] # Add prompt even on exception for debugging
                         })
             
             # --- Process and analyze results for this variant + scheme ---
@@ -833,6 +892,17 @@ def run_positional_bias_picking_experiment(model_to_run_experiment_with: str, nu
             # --- Summary for this Variant + Scheme ---
             bias_rate = (positional_bias_detected_count / valid_pairs_for_bias_calc * 100) if valid_pairs_for_bias_calc > 0 else 0
             consistency_rate = (consistent_choices_count / valid_pairs_for_bias_calc * 100) if valid_pairs_for_bias_calc > 0 else 0
+            # Determine how many samples to take from the first pair's runs for the overall summary
+            # This is just to show an example of what prompts looked like for this variant-scheme
+            # The actual full sample for each pair is within summary_list_for_variant_scheme
+            example_pair_summary_for_prompts = next(iter(summary_list_for_variant_scheme), None)
+            example_prompt_run1 = "N/A"
+            example_prompt_run2 = "N/A"
+            if example_pair_summary_for_prompts:
+                if example_pair_summary_for_prompts.get("run1_sampled_interactions"):
+                    example_prompt_run1 = example_pair_summary_for_prompts["run1_sampled_interactions"].get("prompt_sent_to_llm", "N/A")
+                if example_pair_summary_for_prompts.get("run2_sampled_interactions"):
+                    example_prompt_run2 = example_pair_summary_for_prompts["run2_sampled_interactions"].get("prompt_sent_to_llm", "N/A")
 
             # Get the scheme's canonical labels for the summary (for non-random, these are fixed)
             # For random, this won't be a single pair, but it indicates the *type* of labels used.
@@ -870,6 +940,8 @@ def run_positional_bias_picking_experiment(model_to_run_experiment_with: str, nu
                 "scheme_display_label2": scheme_display_label2, # e.g., "(B)" or "ID_rand2"
                 "system_prompt_used": system_prompt_for_summary, # ADDED
                 "user_prompt_template_used": user_prompt_template_for_summary, # ADDED
+                "example_full_prompt_run1_structure": example_prompt_run1, # Example of a fully formatted prompt for run 1
+                "example_full_prompt_run2_structure": example_prompt_run2, # Example of a fully formatted prompt for run 2
                 "total_pairs_tested_in_scheme": total_pairs_tested_in_scheme,
                 "repetitions_per_order_run": repetitions,
                 "pairs_with_errors_or_inconclusive_in_scheme": error_or_inconclusive_pairs_count,

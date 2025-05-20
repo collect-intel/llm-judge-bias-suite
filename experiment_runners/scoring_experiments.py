@@ -243,7 +243,12 @@ def _score_variant_task(variant, item_data, scoring_criterion, quiet, repetition
                 err_type = "API Error" if api_error_for_this_rep_final else "Parsing/Normalization Error"
                 print(f"        {err_type} in Rep {rep_idx+1} (single rep mode). LLM Raw: {str(llm_response_raw_for_this_rep)[:100]}...")
 
-    return repetition_details_list, errors_in_repetitions_count
+    return {
+        "repetition_details": repetition_details_list, 
+        "errors_in_repetitions": errors_in_repetitions_count,
+        "actual_prompt_sent_to_llm": prompt_to_send,
+        "sampled_llm_raw_responses": [rep_details["raw_llm_response"] for rep_details in repetition_details_list[:min(repetitions, 3)]]
+    }
 
 # --- Main experiment runner ---
 def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, repetitions: int = 1, scoring_type: str = "all", temperature: float = 0.1):
@@ -355,7 +360,11 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
                     variant_name_for_result = completed_task_info["variant_name"]
                     
                     try:
-                        repetition_details_list_for_item, item_errors_count = future.result()
+                        task_outcome_dict = future.result()
+                        repetition_details_list_for_item = task_outcome_dict["repetition_details"]
+                        item_errors_count = task_outcome_dict["errors_in_repetitions"]
+                        actual_prompt_for_item = task_outcome_dict["actual_prompt_sent_to_llm"]
+                        sampled_responses_for_item = task_outcome_dict["sampled_llm_raw_responses"]
                         
                         variant_data_accumulators[variant_name_for_result]["errors_count_total_variant"] += item_errors_count
                         variant_data_accumulators[variant_name_for_result]["items_processed_count_variant"] += 1
@@ -377,7 +386,9 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
                             "expected_scores": completed_task_info.get('expected_scores_notes'),
                             "repetitions": repetition_details_list_for_item,
                             "avg_normalized_score_for_item": avg_norm_score_item,
-                            "std_dev_normalized_score_for_item": std_dev_norm_score_item
+                            "std_dev_normalized_score_for_item": std_dev_norm_score_item,
+                            "actual_prompt_sent_to_llm": actual_prompt_for_item,
+                            "sampled_llm_raw_responses": sampled_responses_for_item
                         })
                         
                     except Exception as e:
@@ -390,7 +401,9 @@ def run_scoring_experiment(show_raw=False, quiet=False, num_samples: int = 1, re
                             "dataset_name": completed_task_info["dataset_name_for_item"],
                             "item_text_snippet": completed_task_info['item_text_snippet_prefix'] + ('...' if len(completed_task_info['item_text_snippet_prefix']) == 100 else ''),
                             "repetitions": [], 
-                            "error_message": str(e)
+                            "error_message": str(e),
+                            "actual_prompt_sent_to_llm": "Error in task execution, prompt might be in task_args",
+                            "sampled_llm_raw_responses": []
                         })
 
 

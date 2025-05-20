@@ -13,8 +13,11 @@ export interface ScoringItemResult {
   // Optional: For comparing LLM scores against a ground truth if available
   expected_scores?: Record<string, number | string | null>; // Keyed by criterion, value is expected normalized score
   repetitions: ScoringRepetitionDetail[];
-  avg_normalized_score_for_item?: number; // Calculated on client or server
-  std_dev_normalized_score_for_item?: number; // Calculated on client or server
+  avg_normalized_score_for_item?: number | null;
+  std_dev_normalized_score_for_item?: number | null;
+  error_message?: string;
+  actual_prompt_sent_to_llm?: string | null;
+  sampled_llm_raw_responses?: string[] | null;
 }
 
 export interface ScoringVariantLabel {

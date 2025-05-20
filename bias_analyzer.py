@@ -1,10 +1,11 @@
 import os
-# import csv # No longer needed for primary output
 import re
 from dotenv import load_dotenv
 import argparse
 import json
 from tqdm import tqdm
+import datetime
+import hashlib
 
 # Import experiment runners
 from experiment_runners.picking_experiments import run_positional_bias_picking_experiment
@@ -13,7 +14,6 @@ from experiment_runners.pairwise_elo_experiment import run_pairwise_elo_experime
 from experiment_runners.multi_criteria_scoring_experiment import run_multi_criteria_experiment
 from experiment_runners.advanced_multi_criteria_experiment import run_permuted_order_multi_criteria_experiment, run_isolated_criterion_scoring_experiment
 from experiment_runners.classification_experiment import run_classification_experiment
-# from bias_suite.experiment_runners.scoring_experiments import run_poem_scoring_experiment # Assuming you'll move it
 
 # Import shared config and functions
 from config_utils import set_api_key, set_llm_model, BIAS_SUITE_LLM_MODEL as config_llm_model, call_openrouter_api
@@ -37,6 +37,77 @@ from test_data import (
 # parse_score, normalize_score, run_poem_scoring_experiment should ideally move to a scoring_experiments.py
 # For now, if you want to run poem scoring, you'd need to ensure call_openrouter_api is available to it,
 # perhaps by passing it or importing it there from config_utils too.
+
+def generate_data_payload_hash(experiment_args):
+    """
+    Generates a hash for the data payloads relevant to the current experiment.
+    """
+    payloads_to_hash = []
+    exp_type = experiment_args.experiment
+    task_type = experiment_args.task # For multi_criteria and adv_multi_criteria
+    scoring_type = experiment_args.scoring_type # For scoring
+
+    # Dynamically import from test_data to avoid loading everything always
+    # and to ensure the most current data is used for hashing.
+    from test_data import (
+        PICKING_PAIRS, POEMS_FOR_SCORING, TEXTS_FOR_SENTIMENT_SCORING,
+        TEXTS_FOR_CRITERION_ADHERENCE_SCORING, FEW_SHOT_EXAMPLE_SETS_SCORING,
+        RANKING_SETS, SHORT_ARGUMENTS_FOR_SCORING, ARGUMENT_EVALUATION_RUBRIC,
+        STORY_OPENINGS_FOR_SCORING, STORY_OPENING_EVALUATION_RUBRIC,
+        CLASSIFICATION_ITEMS, CLASSIFICATION_CATEGORIES, PROMPT_VARIANT_STRATEGIES
+    )
+
+    if exp_type == "picking":
+        payloads_to_hash.append(PICKING_PAIRS)
+    elif exp_type == "scoring":
+        if scoring_type == "poems" or scoring_type == "all":
+            payloads_to_hash.append(POEMS_FOR_SCORING)
+        if scoring_type == "sentiment" or scoring_type == "all":
+            payloads_to_hash.append(TEXTS_FOR_SENTIMENT_SCORING)
+        if scoring_type == "criterion_adherence" or scoring_type == "all":
+            payloads_to_hash.append(TEXTS_FOR_CRITERION_ADHERENCE_SCORING)
+        payloads_to_hash.append(FEW_SHOT_EXAMPLE_SETS_SCORING) # Hash all few-shot sets
+    elif exp_type == "pairwise_elo":
+        payloads_to_hash.append(RANKING_SETS)
+    elif exp_type == "multi_criteria" or exp_type.startswith("adv_multi_criteria"):
+        if task_type == "argument":
+            payloads_to_hash.append(SHORT_ARGUMENTS_FOR_SCORING)
+            payloads_to_hash.append(ARGUMENT_EVALUATION_RUBRIC)
+        elif task_type == "story_opening":
+            payloads_to_hash.append(STORY_OPENINGS_FOR_SCORING)
+            payloads_to_hash.append(STORY_OPENING_EVALUATION_RUBRIC)
+    elif exp_type == "classification":
+        payloads_to_hash.append(CLASSIFICATION_ITEMS)
+        payloads_to_hash.append(CLASSIFICATION_CATEGORIES)
+        payloads_to_hash.append(PROMPT_VARIANT_STRATEGIES)
+    elif exp_type == "all": # If 'all', hash all known major data structures
+        payloads_to_hash.extend([
+            PICKING_PAIRS, POEMS_FOR_SCORING, TEXTS_FOR_SENTIMENT_SCORING,
+            TEXTS_FOR_CRITERION_ADHERENCE_SCORING, FEW_SHOT_EXAMPLE_SETS_SCORING,
+            RANKING_SETS, SHORT_ARGUMENTS_FOR_SCORING, ARGUMENT_EVALUATION_RUBRIC,
+            STORY_OPENINGS_FOR_SCORING, STORY_OPENING_EVALUATION_RUBRIC,
+            CLASSIFICATION_ITEMS, CLASSIFICATION_CATEGORIES, PROMPT_VARIANT_STRATEGIES
+        ])
+
+
+    if not payloads_to_hash:
+        # This case should ideally not be hit if args.experiment is valid
+        # and not 'all' without specific sub-experiment logic in main.
+        # If args.experiment is a specific type, and this is hit, it implies a logic error above.
+        print(f"Warning: No data payloads identified for hashing for experiment type '{exp_type}'. Defaulting to 'nohash'.")
+        return "nohash"
+
+    try:
+        # Serialize to a consistent, compact JSON string
+        serialized_payloads = json.dumps(payloads_to_hash, sort_keys=True, separators=(',', ':'))
+        hasher = hashlib.sha256()
+        hasher.update(serialized_payloads.encode('utf-8'))
+        return hasher.hexdigest()[:8] # e.g., first 8 characters
+    except TypeError as e:
+        # This could happen if some data structure isn't JSON serializable,
+        # which shouldn't be the case for the current test_data.py contents.
+        print(f"Error serializing payload for hashing (experiment: {exp_type}): {e}. Payloads might contain non-serializable objects.")
+        return "hash_err"
 
 def main():
     parser = argparse.ArgumentParser(description="Run LLM bias experiments.")
@@ -168,6 +239,8 @@ def main():
             temp_suffix = f"_temp{temp_str}0" # append 0 if it's a whole number like 1.0 -> 1 -> _temp10
         
         rep_suffix = f"_rep{args.repetitions}"
+        timestamp_str = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+        data_hash_str = generate_data_payload_hash(args)
         
         results_data = None
         current_experiment_type_for_filename = args.experiment # Default, override below
@@ -247,7 +320,7 @@ def main():
             task_data, task_rubric = load_multi_criteria_task_data(args.task)
             permuted_data_for_isolated = None # Logic to load this remains if needed, but now loads JSON
             if args.output_dir:
-                 perm_json_path = os.path.join(args.output_dir, f"adv_multi_criteria_permuted_{args.task}_results_{model_name_slug}{temp_suffix}.json") # Expect .json, add temp_suffix
+                 perm_json_path = os.path.join(args.output_dir, f"adv_multi_criteria_permuted_{args.task}_results_{model_name_slug}{temp_suffix}{rep_suffix}.json") # Expect .json, add temp_suffix and rep_suffix
                  if os.path.exists(perm_json_path):
                     try:
                         with open(perm_json_path, 'r') as f_perm:
@@ -388,7 +461,8 @@ def main():
             exit(1)
         
         if args.output_dir and results_data is not None:
-            filename = f"{current_experiment_type_for_filename}_results_{model_name_slug}{temp_suffix}{rep_suffix}.{output_extension}" # .json, add temp_suffix and rep_suffix
+            # Construct filename with timestamp and data hash
+            filename = f"{current_experiment_type_for_filename}_{timestamp_str}_{data_hash_str}_{model_name_slug}{temp_suffix}{rep_suffix}.{output_extension}"
             filepath = os.path.join(args.output_dir, filename)
             write_results_to_json(filepath, results_data)
 

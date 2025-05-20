@@ -51,6 +51,7 @@ def _run_single_item_evaluation_task_advanced(
     all_repetition_scores = []
     llm_raw_responses_list = []
     errors_in_repetitions_count = 0
+    actual_prompt_sent_to_llm = prompt_to_send
 
     if repetitions > 1 and not quiet:
         print(f"    Evaluating Item: '{item_title}' with Variant: '{prompt_variant_config.get('name', 'N/A')}' (Order: {prompt_variant_config.get('order_permutation_name', 'N/A')}), {repetitions} reps...")
@@ -85,7 +86,9 @@ def _run_single_item_evaluation_task_advanced(
         "scores_per_repetition": all_repetition_scores,
         "llm_raw_responses": llm_raw_responses_list,
         "errors_in_repetitions": errors_in_repetitions_count,
-        "total_repetitions_attempted": repetitions
+        "total_repetitions_attempted": repetitions,
+        "actual_prompt_sent_to_llm": actual_prompt_sent_to_llm,
+        "sampled_llm_raw_responses": llm_raw_responses_list[:min(repetitions, 3)]
     }
 
 # --- Experiment 1: Permuted Order Multi-Criteria Scoring ---
@@ -290,7 +293,7 @@ def run_permuted_order_multi_criteria_experiment(
         if all_results_data:
             first_item_first_order_res = all_results_data[0]
             print(f"Item ID: {first_item_first_order_res.get('item_id')}, Order: {first_item_first_order_res.get('order_permutation_name')}")
-            for i, raw_resp in enumerate(first_item_first_order_res.get('llm_raw_responses', [])):
+            for i, raw_resp in enumerate(first_item_first_order_res.get('sampled_llm_raw_responses', first_item_first_order_res.get('llm_raw_responses', []))):
                 print(f"  Rep {i+1}: {raw_resp[:200]}...")
 
     return final_summary_for_return_permuted
@@ -390,6 +393,7 @@ def run_isolated_criterion_scoring_experiment(
         single_criterion_scores_reps = []
         llm_raw_responses_reps = []
         errors_in_reps = 0
+        actual_prompt_sent_to_llm_isolated = prompt_to_send
 
         if repetitions > 1 and not quiet:
             print(f"    Isolated Eval: Item '{item_title[:30]}...' ({current_task_name}), Criterion '{criterion_name_to_score}' ({repetitions} reps)...")
@@ -421,7 +425,9 @@ def run_isolated_criterion_scoring_experiment(
             "isolated_scores_per_repetition": single_criterion_scores_reps,
             "llm_raw_responses": llm_raw_responses_reps,
             "errors_in_repetitions": errors_in_reps,
-            "total_repetitions_attempted": repetitions
+            "total_repetitions_attempted": repetitions,
+            "actual_prompt_sent_to_llm": actual_prompt_sent_to_llm_isolated,
+            "sampled_llm_raw_responses": llm_raw_responses_reps[:min(repetitions, 3)]
         }
 
     if not quiet: print(f"\\n  Running baseline holistic evaluations ({task_name}, original order) for comparison...")
@@ -620,7 +626,11 @@ def run_isolated_criterion_scoring_experiment(
             first_item_first_crit_res = next((r for r in all_isolated_task_results if r.get("item_id") == items_to_process[0]['id'] and r.get("criterion_scored_in_isolation") == criteria_order_original[0]), None)
             if first_item_first_crit_res:
                 print(f"Item ID: {first_item_first_crit_res.get('item_id')}, Criterion (Isolated): {first_item_first_crit_res.get('criterion_scored_in_isolation')}")
-                for i, raw_resp in enumerate(first_item_first_crit_res.get('llm_raw_responses', [])):
+                if first_item_first_crit_res.get("actual_prompt_sent_to_llm"):
+                    print(f"  Prompt Sent: {str(first_item_first_crit_res.get('actual_prompt_sent_to_llm'))[:300]}...")
+                
+                responses_to_show_iso = first_item_first_crit_res.get("sampled_llm_raw_responses", first_item_first_crit_res.get('llm_raw_responses', []))
+                for i, raw_resp in enumerate(responses_to_show_iso):
                     print(f"  Rep {i+1}: {raw_resp[:200]}...")
             else:
                 print(" (No suitable sample found for raw response display)")

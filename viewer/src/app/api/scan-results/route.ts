@@ -23,18 +23,23 @@ interface ScanResultsResponse {
 // Regex to parse filenames like:
 // experiment_type_results_model_name.extension
 // or adv_multi_criteria_permuted_task_results_model_name.extension
-const fileNameRegex = /^([a-zA-Z0-9_]+(?:_[a-zA-Z0-9_]+)*)_results_([a-zA-Z0-9\/._-]+)\.(csv|json)$/;
+// const fileNameRegex = /^([a-zA-Z0-9_]+(?:_[a-zA-Z0-9_]+)*)_results_([a-zA-Z0-9\/._-]+)\.(csv|json)$/;
 // Simpler regex if the above is too greedy or complex for some names:
 // E.g. picking_results_model_name.csv
 // E.g. multi_criteria_argument_results_model_name.csv
-const simpleFileNameRegex = /^([a-zA-Z0-9_]+)_results_([a-zA-Z0-9\/._-]+)\.(csv|json)$/;
+// const simpleFileNameRegex = /^([a-zA-Z0-9_]+)_results_([a-zA-Z0-9\/._-]+)\.(csv|json)$/;
 // Advanced regex to capture task for multi_criteria and advanced types
 // adv_multi_criteria_permuted_argument_results_model.json -> type: adv_multi_criteria_permuted_argument
 // multi_criteria_story_opening_results_model.csv -> type: multi_criteria_story_opening
 // picking_results_model.csv -> type: picking
-const comprehensiveRegex = /^(adv_multi_criteria_permuted_[a-zA-Z0-9_]+|adv_multi_criteria_isolated_[a-zA-Z0-9_]+|multi_criteria_[a-zA-Z0-9_]+|picking|scoring|pairwise_elo)_results_([a-zA-Z0-9\/._-]+)\.json$/i;
-// Fallback regex for simpler names if the comprehensive one fails
-const simpleFallbackRegex = /^(.*?)_results_([a-zA-Z0-9\/._-]+)\.json$/i;
+
+// --- Regexes for NEW filename structure: {experiment_type}_{YYYYMMDD-HHMMSS}_{data_hash}_{model_name_with_suffixes}.json ---
+const newComprehensiveRegex = /^(adv_multi_criteria_permuted_[a-zA-Z0-9_]+|adv_multi_criteria_isolated_[a-zA-Z0-9_]+|multi_criteria_[a-zA-Z0-9_]+|classification|picking|scoring|pairwise_elo)_\d{8}-\d{6}_[a-f0-9]{8}_(.+?)\.json$/i;
+const newSimpleFallbackRegex = /^(.*?)_\d{8}-\d{6}_[a-f0-9]{8}_(.+?)\.json$/i;
+
+// --- Regexes for OLD filename structure: {experiment_type}_results_{model_name_with_suffixes}.json ---
+const oldComprehensiveRegex = /^(adv_multi_criteria_permuted_[a-zA-Z0-9_]+|adv_multi_criteria_isolated_[a-zA-Z0-9_]+|multi_criteria_[a-zA-Z0-9_]+|classification|picking|scoring|pairwise_elo)_results_([a-zA-Z0-9\/._-]+?)\.json$/i;
+const oldSimpleFallbackRegex = /^(.*?)_results_([a-zA-Z0-9\/._-]+?)\.json$/i;
 
 export async function GET() {
   // Path to the results directory relative to the project root
@@ -78,7 +83,7 @@ export async function GET() {
 
     files.forEach(file => {
       if (file.endsWith('.json')) { 
-        let match = file.match(comprehensiveRegex);
+        let match = file.match(newComprehensiveRegex);
         let experimentTypeFromMatch: string | undefined;
         let modelNameFromMatch: string | undefined;
 
@@ -86,11 +91,23 @@ export async function GET() {
           experimentTypeFromMatch = match[1];
           modelNameFromMatch = match[2];
         } else {
-          // Try the simpler fallback regex if comprehensive one fails
-          match = file.match(simpleFallbackRegex);
+          match = file.match(newSimpleFallbackRegex);
           if (match) {
             experimentTypeFromMatch = match[1];
             modelNameFromMatch = match[2];
+          } else {
+            // If new formats don't match, try old formats
+            match = file.match(oldComprehensiveRegex);
+            if (match) {
+              experimentTypeFromMatch = match[1];
+              modelNameFromMatch = match[2];
+            } else {
+              match = file.match(oldSimpleFallbackRegex);
+              if (match) {
+                experimentTypeFromMatch = match[1];
+                modelNameFromMatch = match[2];
+              }
+            }
           }
         }
         

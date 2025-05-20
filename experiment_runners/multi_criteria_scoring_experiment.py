@@ -122,6 +122,7 @@ def _run_single_item_evaluation_task(
     all_repetition_scores = []
     llm_raw_responses_list = []
     errors_in_repetitions_count = 0
+    actual_prompt_sent_to_llm = prompt_to_send # Store the actual prompt
 
     if repetitions > 1 and not quiet:
         print(f"    Evaluating Item: '{item_title}' with Variant: '{variant_config['name']}' ({repetitions} reps)...")
@@ -154,7 +155,9 @@ def _run_single_item_evaluation_task(
         "scores_per_repetition": all_repetition_scores,
         "llm_raw_responses": llm_raw_responses_list,
         "errors_in_repetitions": errors_in_repetitions_count,
-        "total_repetitions_attempted": repetitions
+        "total_repetitions_attempted": repetitions,
+        "actual_prompt_sent_to_llm": actual_prompt_sent_to_llm,
+        "sampled_llm_raw_responses": llm_raw_responses_list[:min(repetitions, 3)]
     }
 
 # --- Main Experiment Function ---
@@ -315,7 +318,9 @@ def run_multi_criteria_experiment(
             "total_repetitions": result_item.get("total_repetitions_attempted", 0),
             "successful_repetitions": num_successful_reps,
             "errors_in_repetitions": result_item.get("errors_in_repetitions", 0),
-            "criteria_stats": {}
+            "criteria_stats": {},
+            "actual_prompt_sent_to_llm": result_item.get("actual_prompt_sent_to_llm"),
+            "sampled_llm_raw_responses": result_item.get("sampled_llm_raw_responses")
         }
         
         col_idx_offset = 5
@@ -345,10 +350,15 @@ def run_multi_criteria_experiment(
             if not result_item.get("llm_raw_responses"): continue 
             
             print(f"\nItem: {result_item.get('item_title', 'N/A')}, Variant: {result_item.get('variant_name','N/A')}")
-            for rep_idx, raw_resp in enumerate(result_item.get("llm_raw_responses", [])):
+            if i == 0 and result_item.get("actual_prompt_sent_to_llm"):
+                print(f"  Prompt Sent: {str(result_item.get('actual_prompt_sent_to_llm'))[:300]}...")
+            
+            responses_to_show = result_item.get("sampled_llm_raw_responses", result_item.get("llm_raw_responses", []))
+            
+            for rep_idx, raw_resp in enumerate(responses_to_show):
                 print(f"  Rep {rep_idx+1} Raw: {str(raw_resp)[:250]}{'...' if len(str(raw_resp)) > 250 else ''}")
                 successful_scores_for_rep = result_item.get("scores_per_repetition", [])
-                if rep_idx < len(successful_scores_for_rep):\
+                if rep_idx < len(successful_scores_for_rep):
                     print(f"    Parsed: {successful_scores_for_rep[rep_idx]}")
                 else:
                     print("    Parsed: Error or No Valid JSON")

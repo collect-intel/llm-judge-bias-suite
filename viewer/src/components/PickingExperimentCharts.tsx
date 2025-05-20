@@ -170,7 +170,7 @@ const PickingExperimentCharts: React.FC<PickingExperimentChartsProps> = ({ proce
         </div>
       </div>
 
-      {/* Existing Detailed Breakdown Charts and Summaries */} {/* THIS SECTION WILL BE REMOVED/HEAVILY MODIFIED */} Broadband
+      {/* Existing Detailed Breakdown Charts and Summaries */} {/* THIS SECTION WILL BE REMOVED/HEAVILY MODIFIED */}
       {Object.entries(dataByVariant).map(([variantName, variantDataArray]) => {
         
         // const labels = variantDataArray.map(vd => vd.labelingSchemeName); // No longer needed for detailed chart

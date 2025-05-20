@@ -111,7 +111,7 @@ Understanding these interaction-driven factors is crucial for anyone relying on 
         *   `--models <comma_separated_models>`: Specify a comma-separated list of LLM models to run experiments for each.
         *   `--repetitions <N>`: Run each LLM evaluation N times (useful for assessing consistency or for majority voting in bias detection).
         *   `--temp <float>`: Temperature for LLM calls (e.g., 0.1, 0.7). Default is 0.1. This is used for API calls and reflected in the output filename.
-        *   `--output_dir <directory_path>`: Directory to save detailed experiment results as structured **JSON files**. Each experiment type, model, temperature, and repetition count will typically generate its own file (e.g., `picking_results_mistralai_mistral-small_temp01_rep3.json`).
+        *   `--output_dir <directory_path>`: Directory to save detailed experiment results as structured **JSON files**. Each file includes a timestamp and a data payload hash for traceability (e.g., `picking_20231027-153000_a1b2c3d4_mistralai-mistral-small_temp01_rep3.json`).
         *   `--show_raw`: Display (potentially truncated) raw LLM responses in the console.
     *   **Experiment-Specific Flags (examples):**
         *   `picking`:

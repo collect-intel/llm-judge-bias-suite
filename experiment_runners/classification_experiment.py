@@ -197,7 +197,9 @@ def _execute_single_classification_task(
             "errors_across_all_repetitions": repetitions,
             "total_repetitions_attempted": repetitions,
             "llm_chosen_category_id": None,
-            "error_type": "PARSING_ERROR"
+            "error_type": "PARSING_ERROR",
+            "actual_prompt_sent_to_llm": "Error: Prompt generation failed",
+            "sampled_llm_raw_responses": []
         }
 
     individual_runs_results: list[dict] = []
@@ -283,7 +285,9 @@ def _execute_single_classification_task(
         "errors_across_all_repetitions": errors_count,
         "total_repetitions_attempted": repetitions,
         "llm_chosen_category_id": final_chosen_category_id_val,
-        "error_type": final_error_type_val
+        "error_type": final_error_type_val,
+        "actual_prompt_sent_to_llm": prompt_text,
+        "sampled_llm_raw_responses": [run["llm_classification_raw"] for run in individual_runs_results[:min(repetitions, 3)]]
     }
 
 # --- Main Experiment Runner ---

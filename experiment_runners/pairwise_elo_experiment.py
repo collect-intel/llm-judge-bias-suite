@@ -186,7 +186,9 @@ def _process_single_variant(
                 "item_A_content_snippet": prompt_item_A['text'][:50] + "...", "item_B_content_snippet": prompt_item_B['text'][:50] + "...",
                 "winner": "ERROR_ALL_REPS_FAILED", "is_tie": False,
                 "raw_responses_per_repetition": repetition_llm_responses,
-                "errors_in_repetitions": repetition_errors_this_match, "total_repetitions": repetitions
+                "errors_in_repetitions": repetition_errors_this_match, "total_repetitions": repetitions,
+                "actual_prompt_sent_to_llm": prompt,
+                "sampled_llm_raw_responses": repetition_llm_responses[:min(repetitions, 3)]
             })
             continue 
 
@@ -213,7 +215,9 @@ def _process_single_variant(
                 "item_A_content_snippet": prompt_item_A['text'][:50] + "...", "item_B_content_snippet": prompt_item_B['text'][:50] + "...",
                 "winner": "NO_MAJORITY_OR_TIE_NOT_ALLOWED", "is_tie": False,
                 "raw_responses_per_repetition": repetition_llm_responses,
-                "errors_in_repetitions": repetition_errors_this_match, "total_repetitions": repetitions
+                "errors_in_repetitions": repetition_errors_this_match, "total_repetitions": repetitions,
+                "actual_prompt_sent_to_llm": prompt,
+                "sampled_llm_raw_responses": repetition_llm_responses[:min(repetitions, 3)]
             })
             continue 
 
@@ -244,7 +248,9 @@ def _process_single_variant(
                 "item_B_content_snippet": prompt_item_B['text'][:50]+"...",
                 "winner": f"UNHANDLED_LABEL_{overall_match_winner_label}", "is_tie": False,
                 "raw_responses_per_repetition": repetition_llm_responses,
-                "errors_in_repetitions": repetition_errors_this_match, "total_repetitions": repetitions
+                "errors_in_repetitions": repetition_errors_this_match, "total_repetitions": repetitions,
+                "actual_prompt_sent_to_llm": prompt,
+                "sampled_llm_raw_responses": repetition_llm_responses[:min(repetitions, 3)]
             })
             continue 
 
@@ -260,7 +266,9 @@ def _process_single_variant(
             "is_tie": is_match_tie,
             "raw_responses_per_repetition": repetition_llm_responses if show_raw else "Suppressed",
             "errors_in_repetitions": repetition_errors_this_match,
-            "total_repetitions": repetitions
+            "total_repetitions": repetitions,
+            "actual_prompt_sent_to_llm": prompt,
+            "sampled_llm_raw_responses": repetition_llm_responses[:min(repetitions, 3)]
         })
 
     final_rankings = sorted([{"id": item_id, "text_snippet": next((it['text'] for it in items if it['id'] == item_id),"")[:50]+"...", "elo": round(rating), "W": win_loss[item_id]['W'], "L": win_loss[item_id]['L'], "T": win_loss[item_id]['T']} for item_id, rating in ratings.items()], key=lambda x: x['elo'], reverse=True)
